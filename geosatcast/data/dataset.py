@@ -6,7 +6,7 @@ import os
 from torch.utils.data import Dataset
 import torch
 import pandas as pd
-from data.utils import cos_zenith_angle_from_timestamp
+from geosatcast.data.utils import cos_zenith_angle_from_timestamp
 
 
 class Dataset(Dataset):
@@ -38,6 +38,7 @@ class Dataset(Dataset):
         
         self.data_paths = {year: os.path.join(self.data_path, f"{year}_{name}.h5") for year in years}
         self.data_len = {year: h5.File(self.data_paths[year])["time"].shape[0] for year in years}
+        self.time_idx = {year: np.arange(self.data_len[year] - self.seq_len) for year in years}
         self.get_latlon()
         if invariants_path:
             dem = xr.open_dataset(os.path.join(invariants_path, "dem.nc"))["DEM"].values
@@ -63,23 +64,26 @@ class Dataset(Dataset):
             h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len, :, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
             # h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len, :], np.s_[:])
             h["time"].read_direct(t, np.s_[t_i:t_i+self.seq_len], np.s_[:])
-        x = x[:, :, ]
+        # x = x[:, :, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         return x, t
     
     def getitem(self, i):
-        year = np.random.choice(self.years)
-        t_i = np.random.randint(low=0, high=self.data_len[year]-self.seq_len)
-        lat_i = np.random.randint(low=0, high=self.max_shape[-2]-self.field_size)
-        lon_i = np.random.randint(low=0, high=self.max_shape[-1]-self.field_size)
-
-        s = time.time()
-        x, t =  self.get_data(year, t_i, lat_i, lon_i)
-
+        sample = True
+        while sample:
+            year = np.random.choice(self.years)
+            t_i = np.random.choice(self.time_idx[year])
+            lat_i = np.random.randint(low=0, high=self.max_shape[-2]-self.field_size)
+            lon_i = np.random.randint(low=0, high=self.max_shape[-1]-self.field_size)
+            x, t =  self.get_data(year, t_i, lat_i, lon_i)
+            if ~np.isnan(x).any() and t[-1] - t[0] == (self.seq_len-1)*15*60:
+                sample = False
+            else:
+                self.time_idx[year] = np.setdiff1d(self.time_idx[year], t_i)
+                print(year, t_i, "with nans, new time idx length:", len(self.time_idx[year]))
         x = torch.from_numpy(x)
         
         inv = self.inv[:, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
-        s = time.time()
         sza = torch.from_numpy(np.stack([cos_zenith_angle_from_timestamp(
                 t_, 
                 self.latlon_grid[0, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten(),
@@ -94,14 +98,7 @@ class Dataset(Dataset):
         return self.length
     
     def __getitem__(self, i):
-        sample = True
-        while sample:
-            x, t, inv, sza = self.getitem(i)
-            if ~torch.isnan(x).any() and t[-1] - t[0] == (self.seq_len-1)*15*60:
-                sample = False
-            else:
-                print(i, "with nans")
-                i += 1
+        x, t, inv, sza = self.getitem(i)
         return x, t, inv, sza
 
 
@@ -110,15 +107,16 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     np.random.seed(0)
 
-    dataset = Dataset(data_path="/scratch/snx3000/acarpent/SEVIRI/",
-                  name="virtual",
-                  invariants_path="/scratch/snx3000/acarpent/SEVIRI_inv/",
-                  years=[2017],
-                  input_len=8,
-                  output_len=None,
-                  sza=True,
-                  length=1024
-                  )
+    dataset = Dataset(
+        data_path="/scratch/snx3000/acarpent/SEVIRI/",
+        name="virtual",
+        invariants_path="/scratch/snx3000/acarpent/SEVIRI_inv/",
+        years=[2017],
+        input_len=8,
+        output_len=None,
+        sza=True,
+        length=1024
+        )
 
     dataloader = DataLoader(
         dataset,
@@ -130,7 +128,10 @@ if __name__ == "__main__":
         pin_memory=True, 
         persistent_workers=True)
     
-    s = time.time()
-    for batch in dataloader:
-        pass
-    print(time.time()-s)
+    for i in range(20):
+        s = time.time()
+        for batch in dataloader:
+            pass
+        print(i, time.time()-s)
+
+   
