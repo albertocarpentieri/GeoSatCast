@@ -71,15 +71,16 @@ class Dataset(Dataset):
         sample = True
         while sample:
             year = np.random.choice(self.years)
-            t_i = np.random.choice(self.time_idx[year])
+            t_i = np.random.randint(self.data_len[year] - self.seq_len)
             lat_i = np.random.randint(low=0, high=self.max_shape[-2]-self.field_size)
             lon_i = np.random.randint(low=0, high=self.max_shape[-1]-self.field_size)
             x, t =  self.get_data(year, t_i, lat_i, lon_i)
             if ~np.isnan(x).any() and t[-1] - t[0] == (self.seq_len-1)*15*60:
                 sample = False
             else:
-                self.time_idx[year] = np.setdiff1d(self.time_idx[year], t_i)
-                print(year, t_i, "with nans, new time idx length:", len(self.time_idx[year]))
+                # self.time_idx[year] = np.setdiff1d(self.time_idx[year], t_i)
+                # print(year, t_i, "with nans, new time idx length:", len(self.time_idx[year]))
+                print(year, t_i)
         x = torch.from_numpy(x)
         
         inv = self.inv[:, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
@@ -108,9 +109,9 @@ if __name__ == "__main__":
     np.random.seed(0)
 
     dataset = Dataset(
-        data_path="/scratch/snx3000/acarpent/SEVIRI/",
+        data_path="/capstor/scratch/cscs/acarpent/",
         name="virtual",
-        invariants_path="/scratch/snx3000/acarpent/SEVIRI_inv/",
+        invariants_path="/capstor/scratch/cscs/acarpent/",
         years=[2017],
         input_len=8,
         output_len=None,
@@ -124,14 +125,16 @@ if __name__ == "__main__":
         shuffle=False, 
         sampler=None, 
         batch_sampler=None, 
-        num_workers=24, 
+        num_workers=4, 
         pin_memory=True, 
         persistent_workers=True)
     
     for i in range(20):
         s = time.time()
         for batch in dataloader:
-            pass
+            x, _, _, _ = batch 
+        print(x.device, x.shape)
         print(i, time.time()-s)
+        print()
 
    
