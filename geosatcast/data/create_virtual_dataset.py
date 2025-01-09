@@ -29,7 +29,7 @@ def create_virtual_dataset(save_path, virtual_file_path):
     if len(h5_files) == 0:
         raise ValueError("No HDF5 files found to merge")
 
-    with h5py.File(virtual_file_path, 'w', libver='latest') as f_virtual:
+    with h5py.File(virtual_file_path, 'w') as f_virtual:
         dataset_names = ['latitude', 'longitude', 'time', 'channels', 'fields']
         n_files = [1, 1, len(h5_files), 1, len(h5_files)] # no need for multiple files to define lat/lon/channels 
         
@@ -51,7 +51,7 @@ def create_virtual_dataset(save_path, virtual_file_path):
     print(f"Created virtual HDF5 file at {virtual_file_path}")
 
 if __name__ == "__main__":
-    YEAR = 2017
+    YEAR = 2021
     N_DAYS = 1
     SAVE_PATH = f"/capstor/scratch/cscs/acarpent/{YEAR}_weekly_datasets/"
     VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/{YEAR}_virtual.h5"

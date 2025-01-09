@@ -52,7 +52,7 @@ def create_virtual_dataset(save_path, virtual_file_path):
         f_virtual['fields'].dims[2].attach_scale(f_virtual['latitude'])
         f_virtual['fields'].dims[3].attach_scale(f_virtual['longitude'])
 
-    print(f"Created virtual HDF5 file at {VIRTUAL_FILE_PATH}")
+    print(f"Created virtual HDF5 file at {virtual_file_path}")
 
 
 
