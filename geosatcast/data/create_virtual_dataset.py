@@ -25,7 +25,7 @@ def get_datasets_info(file_paths, dataset_name):
     return dtype, tuple(shape)
 
 def create_virtual_dataset(save_path, virtual_file_path):
-    h5_files = [os.path.join(save_path, f) for f in sorted(os.listdir(save_path)) if f.endswith('.h5')]
+    h5_files = [os.path.join(save_path, f) for f in sorted(os.listdir(save_path)) if f.endswith('.h5') and "new" in f]
     if len(h5_files) == 0:
         raise ValueError("No HDF5 files found to merge")
 
@@ -51,9 +51,8 @@ def create_virtual_dataset(save_path, virtual_file_path):
     print(f"Created virtual HDF5 file at {virtual_file_path}")
 
 if __name__ == "__main__":
-    YEAR = 2021
-    N_DAYS = 1
-    SAVE_PATH = f"/capstor/scratch/cscs/acarpent/{YEAR}_weekly_datasets/"
-    VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/{YEAR}_virtual.h5"
+    for YEAR in [2017, 2018, 2019, 2020, 2021]:
+        SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_weekly_datasets/"
+        VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_new_virtual.h5"
 
-    create_virtual_dataset(SAVE_PATH, VIRTUAL_FILE_PATH)
+        create_virtual_dataset(SAVE_PATH, VIRTUAL_FILE_PATH)

@@ -24,14 +24,16 @@ class GroupNorm32(nn.GroupNorm):
         return super().forward(x.float()).type(x.dtype)
     
 def normalization(channels, norm_type="group", num_groups=32):
-    if norm_type == "batch":
+    if norm_type == "batch3d":
         return nn.BatchNorm3d(channels)
+    if norm_type == "batch2d":
+        return nn.BatchNorm2d(channels)
     elif norm_type == "group":
         return nn.GroupNorm(num_groups=num_groups, num_channels=channels)
     elif norm_type == "group32":
         return GroupNorm32
     elif norm_type == 'layer':
-        return nn.GroupNorm(num_groups=1, num_channels=channels)
+        return nn.LayerNorm(num_channels=channels)
     elif (not norm_type) or (norm_type.lower() == 'none'):
         return nn.Identity()
     else:
@@ -69,3 +71,19 @@ def conv_nd(dims, *args, **kwargs):
     elif dims == 3:
         return nn.Conv3d(*args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
+
+# VAE utils
+def kl_from_standard_normal(mean, log_var):
+    kl = 0.5 * (log_var.exp() + mean.square() - 1.0 - log_var)
+    return kl.mean()
+
+
+def sample_from_standard_normal(mean, log_var, num=None):
+    std = (0.5 * log_var).exp()
+    shape = mean.shape
+    if num is not None:
+        # expand channel 1 to create several samples
+        shape = shape[:1] + (num,) + shape[1:]
+        mean = mean[:, None, ...]
+        std = std[:, None, ...]
+    return mean + std * torch.randn(shape, device=mean.device)
