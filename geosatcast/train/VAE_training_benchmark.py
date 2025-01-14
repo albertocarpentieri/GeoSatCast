@@ -8,7 +8,7 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch import seed_everything, Trainer
 from lightning.pytorch.profilers import AdvancedProfiler
 from geosatcast.models.autoencoder import Encoder, Decoder, VAE
-from geosatcast.data.dataset import WorkerDataset
+from geosatcast.data.dataset import SimpleDataset
 import pickle as pkl
 import sys 
 import numpy as np
@@ -42,7 +42,7 @@ def get_dataloader(
     ):
     
 
-    dataset = WorkerDataset(
+    dataset = SimpleDataset(
         data_path,
         invariants_path,
         "new_virtual",

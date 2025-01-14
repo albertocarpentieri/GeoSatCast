@@ -158,8 +158,7 @@ class VAE(LightningModule):
         dec = self.decode(z)
         return dec, z, log_var
 
-    def _loss(self, batch):
-        x, _, _, _ = batch
+    def _loss(self, x):
         (y_pred, mean, log_var) = self.forward(x)
         rec_loss = (x - y_pred).abs().mean()
         kl_loss = kl_from_standard_normal(mean, log_var)
@@ -167,7 +166,8 @@ class VAE(LightningModule):
         return total_loss, rec_loss, kl_loss
 
     def training_step(self, batch, batch_idx):
-        loss, rec_loss, kl_loss = self._loss(batch)
+        x, _, _, _ = batch
+        loss, rec_loss, kl_loss = self._loss(x)
         log_params = {"on_step": True, "on_epoch": True, "prog_bar": True, "sync_dist": False}
         self.log('train_loss', loss, **log_params)
         self.log('train_rec_loss', rec_loss, **log_params)
@@ -176,7 +176,8 @@ class VAE(LightningModule):
 
     @torch.no_grad()
     def val_test_step(self, batch, batch_idx, split="val"):
-        (total_loss, rec_loss, kl_loss) = self._loss(batch)
+        x, _, _, _ = batch
+        (total_loss, rec_loss, kl_loss) = self._loss(x.detach())
         log_params = {"on_step": False, "on_epoch": True, "prog_bar": True, "sync_dist": True}
         self.log(f"{split}_loss", total_loss, **log_params)
         self.log(f"{split}_rec_loss", rec_loss.mean(), **log_params)

@@ -1,4 +1,4 @@
-ID: 'VAE-1'
+ID: 'benchmark'
 seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
@@ -52,4 +52,4 @@ Trainer:
   strategy: 'ddp'
   precision: '16-mixed'
   gradient_clip_val: 1
-  resume_training: /capstor/scratch/cscs/acarpent/Logs/VAE-1_epoch=5-val_rec_loss=0.05595-val_kl_loss=1.46149.ckpt
+  resume_training: 
