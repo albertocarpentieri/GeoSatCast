@@ -96,6 +96,8 @@ class WorkerDataset(Dataset):
             idx = np.where(diff == 15*60*(self.seq_len))[0]
             for i in idx:
                 indices.append((year, int(i)))
+        self.len_worker_indices = len(indices)
+        self.worker_indices = indices
         return indices
 
     def set_worker_indices(self, indices):
@@ -199,6 +201,7 @@ class SimpleDataset(Dataset):
             idx = np.where(diff == 15*60*(self.seq_len))[0]
             for i in idx:
                 indices.append((year, int(i)))
+        self.len_worker_indices = len(indices)
         return indices
 
     def set_worker_indices(self, indices):
@@ -222,95 +225,182 @@ class SimpleDataset(Dataset):
 
 
 if __name__ == "__main__":
-    print("debugging")
-    import os 
-    from torch.utils.data import DataLoader
+
+    import os
+    import torch
+    import torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    from torch.utils.data import DataLoader, Dataset
     from torch.utils.data import get_worker_info
-    from torch.profiler import profile, record_function, ProfilerActivity
+    from torch.utils.data.distributed import DistributedSampler
+    from torch.profiler import profile, ProfilerActivity
+    import numpy as np
+    import time
+
+    # Initialize the process group
+    dist.init_process_group("nccl")
+
+    # Get the current GPU and process information
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f"cuda:{local_rank}")
 
 
-    # h5.get_config().mpi = True
-
-
-    def worker_init_fn(worker_id):
-        worker_info = get_worker_info()
-        dataset = worker_info.dataset
-        num_workers = worker_info.num_workers
-        total_samples = len(dataset.global_indices)
-        
-        # Split the global indices among workers
-        chunk_size = np.ceil(total_samples / num_workers)
-        start_idx = int(worker_id * chunk_size)
-        
-        end_idx = int(min(start_idx + chunk_size, total_samples))
-        worker_indices = dataset.global_indices[start_idx:end_idx]
-        dataset.set_worker_indices(worker_indices)
-        print(worker_id, start_idx, len(dataset.worker_indices))
-
-    num_workers=16
-    batch_size=64
+    num_workers = 32
+    batch_size = 64
     pref_f = 4
+    data_path = "/capstor/scratch/cscs/acarpent/SEVIRI/"
+    invariants_path = "/capstor/scratch/cscs/acarpent/SEVIRI/invariants/"
 
-    # Assign worker-specific indices to the dataset
+    # Create the dataset
     dataset = WorkerDataset(
-        data_path="/capstor/scratch/cscs/acarpent/SEVIRI/",
-        invariants_path="/capstor/scratch/cscs/acarpent/SEVIRI/invariants/",
+        data_path=data_path,
+        invariants_path=invariants_path,
         name="new_virtual",
         years=[2017, 2018, 2019],
         input_len=1,
         output_len=None,
         field_size=256,
-        length=batch_size*100
-        )
-    
-    
-    print("dataset initialized")
-    print(num_workers, batch_size, pref_f)
-    print(torch.cuda.is_available())
+        length=batch_size * 100 * 4,
+    )
 
+    # Wrap the dataset with a DistributedSampler
+    sampler = DistributedSampler(dataset)
+
+    # Create the DataLoader
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=False,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
         prefetch_factor=pref_f,
-        worker_init_fn=worker_init_fn,  # Initialize workers with partitioned indices
+        # worker_init_fn=worker_init_fn,
         persistent_workers=True,
     )
-    
+
     # Warm-up
     print("Starting warm-up...")
     warmup_start = time.time()
     b = 0
+
     with profile(
-        activities=[ProfilerActivity.CPU],
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         on_trace_ready=torch.profiler.tensorboard_trace_handler('/capstor/scratch/cscs/acarpent/log')
     ) as prof:
         for batch in dataloader:
             x, t, inv, sza = batch
-            x = x.to("cuda")
-            t = t.to("cuda")
-            inv = inv.to("cuda")
-            sza = sza.to("cuda")
+            x = x.to(device)
+            t = t.to(device)
+            inv = inv.to(device)
+            sza = sza.to(device)
             b += 1
-        print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+        print(f"Time to retrieve {b} batches: {time.time() - warmup_start}")
+
         for batch in dataloader:
+            x, t, inv, sza = batch
+            x = x.to(device)
+            t = t.to(device)
+            inv = inv.to(device)
+            sza = sza.to(device)
             b += 1
-        print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+        print(f"Time to retrieve {b} batches: {time.time() - warmup_start}")
+
     print(prof.key_averages().table(sort_by="cpu_time_total"))
 
-    with profile(
-        activities=[ProfilerActivity.CPU],
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('/capstor/scratch/cscs/acarpent/log')
-    ) as prof:
-        for batch in dataloader:
-            b += 1
-        print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
-        for batch in dataloader:
-            b += 1
-        print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
-    print(prof.key_averages().table(sort_by="cpu_time_total"))
+    # Cleanup
+    dist.destroy_process_group()
+
+# if __name__ == "__main__":
+#     print("debugging")
+#     import os 
+#     from torch.utils.data import DataLoader
+#     from torch.utils.data import get_worker_info
+#     from torch.profiler import profile, record_function, ProfilerActivity
+
+
+#     # h5.get_config().mpi = True
+
+
+#     def worker_init_fn(worker_id):
+#         worker_info = get_worker_info()
+#         dataset = worker_info.dataset
+#         num_workers = worker_info.num_workers
+#         total_samples = len(dataset.global_indices)
+        
+#         # Split the global indices among workers
+#         chunk_size = np.ceil(total_samples / num_workers)
+#         start_idx = int(worker_id * chunk_size)
+        
+#         end_idx = int(min(start_idx + chunk_size, total_samples))
+#         worker_indices = dataset.global_indices[start_idx:end_idx]
+#         dataset.set_worker_indices(worker_indices)
+#         print(worker_id, start_idx, len(dataset.worker_indices))
+
+#     num_workers=16
+#     batch_size=64
+#     pref_f = 4
+
+#     # Assign worker-specific indices to the dataset
+#     dataset = WorkerDataset(
+#         data_path="/capstor/scratch/cscs/acarpent/SEVIRI/",
+#         invariants_path="/capstor/scratch/cscs/acarpent/SEVIRI/invariants/",
+#         name="new_virtual",
+#         years=[2017, 2018, 2019],
+#         input_len=1,
+#         output_len=None,
+#         field_size=256,
+#         length=batch_size*100
+#         )
+    
+    
+#     print("dataset initialized")
+#     print(num_workers, batch_size, pref_f)
+#     print(torch.cuda.is_available())
+
+#     dataloader = DataLoader(
+#         dataset,
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=num_workers,
+#         pin_memory=True,
+#         prefetch_factor=pref_f,
+#         worker_init_fn=worker_init_fn,  # Initialize workers with partitioned indices
+#         persistent_workers=True,
+#     )
+    
+#     # Warm-up
+#     print("Starting warm-up...")
+#     warmup_start = time.time()
+#     b = 0
+#     with profile(
+#         activities=[ProfilerActivity.CPU],
+#         on_trace_ready=torch.profiler.tensorboard_trace_handler('/capstor/scratch/cscs/acarpent/log')
+#     ) as prof:
+#         for batch in dataloader:
+#             x, t, inv, sza = batch
+#             x = x.to("cuda")
+#             t = t.to("cuda")
+#             inv = inv.to("cuda")
+#             sza = sza.to("cuda")
+#             b += 1
+#         print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+#         for batch in dataloader:
+#             b += 1
+#         print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+#     print(prof.key_averages().table(sort_by="cpu_time_total"))
+
+#     with profile(
+#         activities=[ProfilerActivity.CPU],
+#         on_trace_ready=torch.profiler.tensorboard_trace_handler('/capstor/scratch/cscs/acarpent/log')
+#     ) as prof:
+#         for batch in dataloader:
+#             b += 1
+#         print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+#         for batch in dataloader:
+#             b += 1
+#         print(f"Time to retrieve {b} batches:", time.time() - warmup_start)
+#     print(prof.key_averages().table(sort_by="cpu_time_total"))
 
 
    
