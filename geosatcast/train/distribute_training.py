@@ -4,6 +4,7 @@ import torch.distributed as dist
 import numpy as np
 from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
+from geosatcast.models.autoencoder import VAE, Encoder, Decoder
 from torch.utils.tensorboard import SummaryWriter
 import logging
 import random
@@ -16,7 +17,7 @@ def set_global_seed(seed):
     # PyTorch random
     torch.manual_seed(seed)
     # PyTorch on GPUs
-    torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
     # Ensure deterministic behavior
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
@@ -147,3 +148,28 @@ def reduce_tensor(tensor, rank):
     # Average the loss across all devices
     tensor /= dist.get_world_size()
     return tensor
+
+def load_vae(ckpt_path):
+    """
+    Loads model, optimizer, and scheduler states from a checkpoint.
+    """
+    
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    config = ckpt["config"]
+
+    encoder_config = config['Encoder']
+    decoder_config = config['Decoder']
+    vae_config = config['VAE']
+    encoder = Encoder(**encoder_config)
+    decoder = Decoder(
+        in_dim=vae_config['hidden_width'],
+        out_dim=encoder_config['in_dim'],
+        **decoder_config)
+    vae = VAE(encoder,
+              decoder,
+              **vae_config,
+              encoded_channels=encoder_config['max_ch'],
+        )
+    
+    vae.load_state_dict(ckpt["model_state_dict"])
+    return vae

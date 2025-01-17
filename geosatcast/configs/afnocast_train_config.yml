@@ -1,0 +1,49 @@
+ID: 'try'
+Experiment: 'try'
+
+seed: 0
+Dataset:
+  data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
+  invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
+  input_seq_len: 3 
+  num_workers: 16
+  train_length: 128000
+  val_length: 12800
+  field_size: 256
+  train_years: [2017, 2018, 2019]
+  val_years: [2020]
+  batch_size: 64
+
+Inv_Encoder:
+  in_dim: 3
+  levels: 2
+  extra_resblock_levels: [0,1]
+  downsampling_mode: "stride"
+  norm:
+  min_ch: 32
+  max_ch: 64
+
+
+AFNOCast:
+  VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_55.pt"
+  hidden_dim: 192
+  in_steps: 2
+  embed_dim: 512
+  embed_dim_out: 128
+  forecast_depth: 8
+  num_blocks: 8
+  mlp_ratio: 4
+  norm:
+
+Checkpoint:
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
+  resume_path: 
+
+Loss:
+  type: "L1"
+
+Trainer:
+  opt_patience: 3
+  lr: 0.0005
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNOCast/'
+  max_epochs: 100
