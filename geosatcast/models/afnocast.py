@@ -6,6 +6,7 @@ from geosatcast.models.autoencoder import VAE, Encoder
 import torch.nn.functional as F
 from geosatcast.utils import avg_pool_nd, conv_nd
 
+
 class AFNOCastLatent(nn.Module):
     def __init__(
             self,
@@ -25,6 +26,7 @@ class AFNOCastLatent(nn.Module):
         self.embed_dim = embed_dim
         self.embed_dim_out = embed_dim_out
         self.in_steps = in_steps
+        self.forecast_depth = forecast_depth
         
         # compresses the time dimension to embed the input
         self.proj =  conv_nd(
@@ -43,32 +45,41 @@ class AFNOCastLatent(nn.Module):
                 )
 
         self.forecast = nn.Sequential(
-            *[torch.utils.checkpoint.checkpoint(AFNOBlock3d(
-                dim=embed_dim,
-                mlp_ratio=mlp_ratio,
-                num_blocks=num_blocks,
-                norm=norm
-            )) for _ in range(forecast_depth)]
-        )
+            *(AFNOBlock3d(
+                    dim=embed_dim,
+                    mlp_ratio=mlp_ratio, 
+                    num_blocks=num_blocks,
+                    norm=norm
+                )
+            for _ in range(forecast_depth))
+            )
 
-    
     def forecast_step(self, x, inv):
+        print("encoded x", x.mean().detach(), x.std().detach())
+        print("encoded inv", inv.mean().detach(), inv.std().detach())
         x = torch.cat((x, inv), dim=1)
+        print("after concat", x.mean().detach(), x.std().detach())
         x = self.proj(x)
-        x = self.forecast(x)
+        print("after proj", x.mean().detach(), x.std().detach())
+        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=True)
+        # x = self.forecast(x)
+        print("after forecast", x.mean().detach(), x.std().detach())
         x = self.reproj(x)
+        print("after reproj", x.mean().detach(), x.std().detach())
         return x
     
-    def forward(self, x, inv, n_steps=48):
+    def forward(self, x, inv, n_steps=1):
         n_steps = min((n_steps, inv.shape[2]-self.in_steps+1))
+        print("n steps", n_steps)
+        print("inv shape", inv.shape)
         yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
-        
         for i in range(n_steps):
             yhat_ = self.forecast_step(x, inv[:,:,i:i+self.in_steps])
             yhat[:,:,i:i+1] = yhat_
             if i < n_steps-1:
                 x = torch.concat((x[:,:,-1:], yhat_), dim=2)
         return yhat
+
 
 class AFNOCast(nn.Module):
     def __init__(

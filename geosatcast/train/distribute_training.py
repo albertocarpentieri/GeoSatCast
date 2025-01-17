@@ -170,6 +170,8 @@ def load_vae(ckpt_path):
               **vae_config,
               encoded_channels=encoder_config['max_ch'],
         )
-    
-    vae.load_state_dict(ckpt["model_state_dict"])
+    state_dict = {
+        k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
+    }
+    vae.load_state_dict(state_dict)
     return vae
