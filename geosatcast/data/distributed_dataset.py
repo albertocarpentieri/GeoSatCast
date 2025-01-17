@@ -49,6 +49,8 @@ class DistributedDataset(Dataset):
         channels=np.arange(11),
         field_size=256,
         length=10000,
+        validation=False,
+        rank=1
         ):
         
         self.data_path = data_path
@@ -79,6 +81,8 @@ class DistributedDataset(Dataset):
         self.length = length
         self.get_latlon()
         self.generate_global_indices()
+        self.validation = validation
+        self.rank = rank
 
     def get_latlon(self):
         with h5.File(self.data_paths[self.years[0]], "r") as h:
@@ -110,9 +114,15 @@ class DistributedDataset(Dataset):
         return self.length
     
     def get_data(self, year, t_i, lat_i, lon_i):
-        x = np.empty((self.seq_len, 11, self.field_size, self.field_size), dtype=np.float32)
+        # x = np.empty((self.seq_len, 11, self.field_size, self.field_size), dtype=np.float32)
+        # with h5.File(self.data_paths[year], "r") as h:
+        #     h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
+        
+        x = np.empty((self.seq_len, 11, *self.max_shape), dtype=np.float32)
         with h5.File(self.data_paths[year], "r") as h:
-            h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
+            h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:], np.s_[:])
+        x = x[:,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
+        
         t = self.timestamps[year][t_i:t_i+self.seq_len]
 
         inv = self.inv[:, None, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
@@ -136,8 +146,13 @@ class DistributedDataset(Dataset):
         else:
             i = int(idx % self.len_indices)
             year, t_i = self.indices[i]
-        lat_i = np.random.randint(0, self.max_shape[-2] - self.field_size)
-        lon_i = np.random.randint(0, self.max_shape[-1] - self.field_size)
+        
+        if self.validation:
+            sampler = np.random.default_rng(int(idx * self.rank)).integers
+        else:
+            sampler = np.random.randint
+        lat_i = sampler(0, self.max_shape[-2] - self.field_size)
+        lon_i = sampler(0, self.max_shape[-1] - self.field_size)        
         x, t, inv, sza = self.get_data(year, t_i, lat_i, lon_i)
         return x, t, inv, sza
 
@@ -174,11 +189,10 @@ class WorkerDistributedSampler(Sampler):
         self.drop_last = drop_last
 
         self.indices = dataset.indices
-        self.replica_indices = np.array_split(self.indices, self.num_replicas)
-
+        self.total_size = len(self.indices)
+        
         # Compute the number of samples each process should handle
         self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
-        self.total_size = self.num_samples * self.num_replicas
 
         print(f"Defining sampler for replica {self.rank}")
 
@@ -187,21 +201,12 @@ class WorkerDistributedSampler(Sampler):
         if self.shuffle:
             g = torch.Generator()
             g.manual_seed(self.seed)
-            rep_idx = torch.randperm(self.num_replicas, generator=g)[self.rank]
+            
         else:
-            rep_idx = self.rank
+            g = torch.Generator()
+            g.manual_seed(0)
 
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:
-            # Divide indices among workers in this process
-            self.num_workers = worker_info.num_workers
-            self.worker_id = worker_info.id
-            self.dataset.set_worker_indices(np.array_split(self.replica_indices[rep_idx], self.num_workers)[self.worker_id])
-            print(f"Set worker indices for worker id: {self.worker_id} of {self.num_workers} total workers for rank {self.rank} with sampled replica idx: {rep_idx}")
-        else:
-            self.dataset.set_worker_indices(self.replica_indices[rep_idx])
-            print(f"Set indices for rank {self.rank} with sampled replica idx: {rep_idx}")
-        iter_indices = np.arange(self.num_samples)
+        iter_indices = torch.randperm(self.total_size, generator=g)[:self.num_samples].tolist()
         return iter(iter_indices)
 
     def __len__(self):
@@ -239,7 +244,7 @@ if __name__ == "__main__":
 
     num_workers = 16
     batch_size = 64
-    pref_f = 4
+    pref_f = 8
     data_path = "/capstor/scratch/cscs/acarpent/SEVIRI/"
     invariants_path = "/capstor/scratch/cscs/acarpent/SEVIRI/invariants/"
     print("num workers:", num_workers)

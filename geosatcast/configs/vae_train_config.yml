@@ -1,13 +1,16 @@
 ID: 'VAE-1'
 Experiment: 'VAE-128-0.01'
+
+# ID: 'try'
+# Experiment: 'try'
 seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
   input_seq_len: 1 
   num_workers: 16
-  train_length: 160000
-  val_length: 16000
+  train_length: 128000
+  val_length: 12800
   field_size: 256
   train_years: [2017, 2018, 2019]
   val_years: [2020]
@@ -37,14 +40,14 @@ EarlyStopping:
   patience: 6
 
 Checkpoint:
-  dirpath: '/capstor/scratch/cscs/acarpent/Logs/VAE/'
-  resume_path:
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/"
+  resume_path: 
 
 Loss:
   kl_weight: 0.01
 
 Trainer:
   opt_patience: 3
-  lr: 0.0001
+  lr: 0.0005
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/VAE/'
   max_epochs: 100

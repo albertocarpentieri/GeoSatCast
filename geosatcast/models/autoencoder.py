@@ -76,10 +76,7 @@ class VAE(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
-        if hidden_width != encoded_channels:
-            self.to_mean = nn.Conv3d(encoded_channels, hidden_width, kernel_size=1)
-        else:
-            self.to_mean = nn.Identity()
+        self.to_mean = nn.Conv3d(encoded_channels, hidden_width, kernel_size=1)
         self.to_var = nn.Conv3d(encoded_channels, hidden_width, kernel_size=1)
 
     def encode(self, x):
@@ -92,7 +89,10 @@ class VAE(nn.Module):
         return self.decoder(z)
 
     def forward(self, x, sample_posterior=True):
-        z, log_var = self.encode(x)
+        mean, log_var = self.encode(x)
         if sample_posterior:
-            z = sample_from_standard_normal(z, log_var)
-        return self.decode(z), z, log_var
+            z = sample_from_standard_normal(mean, log_var)
+            z = self.decode(z)
+        else:
+            z = self.decode(mean)
+        return z, mean, log_var
