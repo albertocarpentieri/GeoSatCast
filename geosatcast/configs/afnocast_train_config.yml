@@ -1,5 +1,5 @@
-ID: 'try'
-Experiment: 'try'
+ID: 'AFNOCast-1'
+Experiment: 'AFNOCast-512-8'
 
 seed: 0
 Dataset:
@@ -25,7 +25,7 @@ Inv_Encoder:
 
 
 AFNOCast:
-  VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_75.pt"
+  VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
   hidden_dim: 192
   in_steps: 2
   embed_dim: 512
@@ -33,7 +33,7 @@ AFNOCast:
   forecast_depth: 8
   num_blocks: 8
   mlp_ratio: 4
-  norm: "none"
+  norm: "layer"
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"

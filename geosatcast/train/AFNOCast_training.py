@@ -11,8 +11,8 @@ from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor 
 
-def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
-    model.eval()
+def validate(afnocast, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
+    afnocast.eval()
     total_loss = 0
     total_loss_per_ch = torch.zeros((11,))
     num_batches = 0
