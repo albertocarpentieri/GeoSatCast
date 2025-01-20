@@ -1,11 +1,10 @@
 import torch
 from torch import nn
-from geosatcast.blocks.AFNO import AFNOBlock3d
 import torch.nn.functional as F
 from geosatcast.utils import avg_pool_nd, conv_nd
+from geosatcast.blocks.NAT import NATBlock2D
 
-
-class AFNOCastLatent(nn.Module):
+class NATCastLatent(nn.Module):
     def __init__(
             self,
             hidden_dim,
@@ -14,25 +13,26 @@ class AFNOCastLatent(nn.Module):
             embed_dim_out=128,
             forecast_depth=0,
             num_blocks=8,
-            mlp_ratio=4,
-            norm='group',
-            **kwargs
-        ):
+            mlp_ratio=1,
+            kernel_size=3,
+    ):
         super().__init__()
-
         self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
         self.embed_dim_out = embed_dim_out
         self.in_steps = in_steps
         self.forecast_depth = forecast_depth
+
+        if isinstance(kernel_size, int):
+            kernel_size = [kernel_size for _ in range(forecast_depth)]
         
         # compresses the time dimension to embed the input
         self.proj = conv_nd(
-                 3,
-                 hidden_dim, 
-                 embed_dim,
-                 kernel_size=(self.in_steps,1,1),
-                 stride=(self.in_steps,1,1))
+                    3,
+                    hidden_dim, 
+                    embed_dim,
+                    kernel_size=(self.in_steps,1,1),
+                    stride=(self.in_steps,1,1))
         
         self.reproj = conv_nd(
                 3,
@@ -41,17 +41,18 @@ class AFNOCastLatent(nn.Module):
                 kernel_size=1,
                 stride=1
                 )
-
+        
         self.forecast = nn.Sequential(
-            *(AFNOBlock3d(
-                    dim=embed_dim,
-                    mlp_ratio=mlp_ratio, 
-                    num_blocks=num_blocks,
-                    norm=norm
+                *(NATBlock2D(
+                        dim=embed_dim,
+                        mlp_ratio=mlp_ratio, 
+                        num_blocks=num_blocks,
+                        norm=norm,
+                        kernel_size=kernel_size[i]
+                    )
+                for i in range(forecast_depth))
                 )
-            for _ in range(forecast_depth))
-            )
-
+    
     def forecast_step(self, x, inv):
         x = torch.cat((x, inv), dim=1)
         x = self.proj(x)
@@ -70,16 +71,16 @@ class AFNOCastLatent(nn.Module):
         return yhat
 
 
-class AFNOCast(nn.Module):
+class NATCast(nn.Module):
     def __init__(
             self,
-            afnocast_latent,
+            latent_model,
             vae,
             inv_encoder
-        ):
+    ):
         super().__init__()
 
-        self.latent_model = afnocast_latent
+        self.latent_model = latent_model
         self.vae = vae
         self.inv_encoder = inv_encoder
         for param in self.vae.parameters():
@@ -94,7 +95,7 @@ class AFNOCast(nn.Module):
     
     def forward(self, x, inv, n_steps):
         return self.vae.decode(self.latent_forward(x, inv, n_steps))
-        
+
 
 if __name__ == "__main__":
     pass

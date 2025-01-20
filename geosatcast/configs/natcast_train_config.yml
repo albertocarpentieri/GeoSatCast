@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1'
-Experiment: 'AFNOCast-512-1'
+ID: 'NATCast-1'
+Experiment: 'NATCast-512-1'
 
 seed: 0
 Dataset:
@@ -23,28 +23,28 @@ Inv_Encoder:
   min_ch: 32
   max_ch: 64
 
-
-AFNOCast:
+Model_Type: "NAT"
+NATCast:
   VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
   hidden_dim: 192
   in_steps: 2
   embed_dim: 512
   embed_dim_out: 128
-  forecast_depth: 8
-  num_blocks: 8
+  forecast_depth: 1
+  num_blocks: 1
   mlp_ratio: 4
   norm: "layer"
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-1/AFNOCast-1_29.pt"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
+  resume_path: #"/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-1/AFNOCast-1_29.pt"
 
 Loss:
   type: "L1"
 
 Trainer:
   opt_patience: 3
-  lr: 0.0001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNOCast/'
+  lr: 0.0005
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/NATCast/'
   max_epochs: 100
   n_steps: 1

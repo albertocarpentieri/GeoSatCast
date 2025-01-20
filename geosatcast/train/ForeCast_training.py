@@ -6,19 +6,20 @@ import torch.distributed as dist
 import numpy as np
 from geosatcast.models.autoencoder import Encoder, Decoder, VAE
 from geosatcast.models.afnocast import AFNOCastLatent, AFNOCast
+from geosatcast.models.natcast import NATCastLatent, NATCast
 from torch.nn.parallel import DistributedDataParallel as DDP
 from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor 
 
-def validate(afnocast, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
-    afnocast.eval()
+def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
+    model.eval()
     total_loss = 0
     total_loss_per_ch = torch.zeros((11,))
     num_batches = 0
     with torch.no_grad():
         for batch in val_loader:
-            loss, loss_per_ch = compute_loss(afnocast, batch, n_forecast_steps, device, per_ch=True)
+            loss, loss_per_ch = compute_loss(model, batch, n_forecast_steps, device, per_ch=True)
             total_loss += loss.item()
             total_loss_per_ch += loss_per_ch.cpu()
             num_batches += 1
@@ -41,7 +42,7 @@ def validate(afnocast, n_forecast_steps, val_loader, device, logger, writer, con
     return avg_loss
 
 def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
-    in_steps = model.module.afnocast_latent.in_steps
+    in_steps = model.module.latent_model.in_steps
     
     # open batch
     x, _, inv, sza = batch
@@ -73,7 +74,7 @@ def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
 def train(
     rank, 
     config, 
-    afnocast,
+    model,
     train_loader, 
     val_loader, 
     train_sampler, 
@@ -83,8 +84,8 @@ def train(
     writer):
 
     device = f"cuda:{rank}"
-    afnocast.to(device)
-    afnocast = DDP(afnocast, device_ids=[rank])
+    model.to(device)
+    model = DDP(model, device_ids=[rank])
 
     # Initialize GradScaler for mixed precision
     scaler = torch.amp.GradScaler('cuda')
@@ -93,7 +94,7 @@ def train(
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
     start_epoch = 0
     if checkpoint_path and os.path.isfile(checkpoint_path):
-        start_epoch = load_checkpoint(afnocast, optimizer, scheduler, checkpoint_path, logger, rank)
+        start_epoch = load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank)
 
     tot_num_batches = len(train_loader)
     logger.info(f"Total number of batches is: {tot_num_batches}")
@@ -106,7 +107,7 @@ def train(
         print(f"seed: {seed}")
         
         train_sampler.set_epoch(epoch)
-        afnocast.train()
+        model.train()
         
         total_loss = 0.0
         total_loss_per_ch = torch.zeros((11,))
@@ -116,7 +117,7 @@ def train(
             optimizer.zero_grad()
             # Mixed precision forward and loss computation
             with torch.amp.autocast('cuda'):
-                loss = compute_loss(afnocast, batch, n_forecast_steps, device)
+                loss = compute_loss(model, batch, n_forecast_steps, device)
             
             # Backpropagation with gradient scaling
             scaler.scale(loss).backward()
@@ -141,9 +142,9 @@ def train(
             writer.add_scalar("Train/Loss", avg_loss, epoch)
             logger.info(f"Epoch {epoch}: Avg Loss {avg_loss:.6f}")
             # Save the model at the end of each epoch
-            save_model(afnocast, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config)
+            save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config)
 
-        val_loss = validate(afnocast, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
+        val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
         scheduler.step(val_loss)
         
         # log the learning rate
@@ -188,21 +189,34 @@ def main():
         length=val_length,
         validation=True)
 
-    vae = load_vae(config["AFNOCast"].pop("VAE_ckpt_path"))
-    afnocast_latent = AFNOCastLatent(**config["AFNOCast"])
+    
     inv_encoder = Encoder(**config["Inv_Encoder"])
-    afnocast = AFNOCast(
-        afnocast_latent,
-        vae,
-        inv_encoder)
+    
+    model_type = config["Model_Type"]
 
-    optimizer = torch.optim.AdamW(afnocast.parameters(), lr=config["Trainer"]["lr"])
+    if model_type == "AFNO":
+        vae = load_vae(config["AFNOCast"].pop("VAE_ckpt_path"))
+        latent_model = AFNOCastLatent(**config["AFNOCast"])
+        model = AFNOCast(
+            latent_model,
+            vae,
+            inv_encoder)
+
+    elif model_type == "NAT":
+        vae = load_vae(config["NATCast"].pop("VAE_ckpt_path"))
+        latent_model = NATCastLatent(**config["NATCast"])
+        model = NATCast(
+            latent_model,
+            vae,
+            inv_encoder)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["Trainer"]["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.25, patience=config["Trainer"]["opt_patience"])
 
     train(
         local_rank, 
         config, 
-        afnocast,
+        model,
         train_dataloader, 
         val_dataloader, 
         train_sampler, 
