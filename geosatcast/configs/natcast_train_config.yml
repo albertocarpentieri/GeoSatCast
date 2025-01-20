@@ -23,9 +23,11 @@ Inv_Encoder:
   min_ch: 32
   max_ch: 64
 
+VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
+
 Model_Type: "NAT"
-NATCast:
-  VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
+
+Model:
   hidden_dim: 192
   in_steps: 2
   embed_dim: 512
