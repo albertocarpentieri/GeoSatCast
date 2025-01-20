@@ -183,15 +183,15 @@ class AFNONATCastLatent(nn.Module):
                 )
         
         forecast = []
-        for i in forecast_depth:
-            self.forecast.append(AFNOBlock2D(
+        for i in range(forecast_depth):
+            forecast.append(AFNOBlock2D(
                 dim=embed_dim,
                 mlp_ratio=mlp_ratio, 
                 num_blocks=afno_num_blocks,
                 norm=afno_norm,
                 channel_first=False
             ))
-            self.forecast.append(NATBlock2D(
+            forecast.append(NATBlock2D(
                 dim=embed_dim,
                 mlp_ratio=mlp_ratio, 
                 num_blocks=nat_num_blocks,
