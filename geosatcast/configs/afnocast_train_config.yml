@@ -37,7 +37,7 @@ AFNOCast:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-1/AFNOCast-1_29.pt"
 
 Loss:
   type: "L1"
