@@ -33,8 +33,8 @@ Model:
   embed_dim: 512
   embed_dim_out: 128
   forecast_depth: 1
-  num_afno_blocks: 8
-  num_nat_blocks: 1
+  afno_num_blocks: 8
+  nat_num_blocks: 1
   mlp_ratio: 4
   afno_norm: 
   nat_norm:
