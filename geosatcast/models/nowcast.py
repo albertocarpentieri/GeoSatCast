@@ -5,6 +5,7 @@ from geosatcast.utils import avg_pool_nd, conv_nd
 from geosatcast.blocks.NAT import NATBlock2D
 from geosatcast.blocks.AFNO import AFNOBlock2D
 
+
 class AFNOCastLatent(nn.Module):
     def __init__(
             self,
@@ -58,7 +59,7 @@ class AFNOCastLatent(nn.Module):
         x = self.proj(x)
         x = x.squeeze(2).permute(0,2,3,1)
         x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=True)
-        x = self.reproj(x.unsqueeze(2).permute(0,4,1,2,3))
+        x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
         return x
     
     def forward(self, x, inv, n_steps=1):

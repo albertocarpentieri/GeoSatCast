@@ -27,7 +27,7 @@ Model_Type: "AFNO"
 
 VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
 
-AFNOCast:
+Model:
   hidden_dim: 192
   in_steps: 2
   embed_dim: 512

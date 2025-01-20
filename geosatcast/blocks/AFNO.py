@@ -110,13 +110,13 @@ class Mlp(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        if self.channel_first:
+        if channel_first:
             self.fc1 = conv_nd(2, in_features, hidden_features, 1)
         else:
             self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
         
-        if self.channel_first:
+        if channel_first:
             self.fc1 = conv_nd(2, hidden_features, out_features, 1)
         else:
             self.fc2 = nn.Linear(hidden_features, out_features)
@@ -157,7 +157,8 @@ class AFNOBlock2D(nn.Module):
             num_blocks, 
             sparsity_threshold,
             hard_thresholding_fraction, 
-            res_mult=afno_res_mult)
+            res_mult=afno_res_mult,
+            channel_first=channel_first)
         self.norm2 = normalization(dim, norm)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(
