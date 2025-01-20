@@ -32,8 +32,10 @@ def normalization(channels, norm_type="group", num_groups=32):
         return nn.GroupNorm(num_groups=num_groups, num_channels=channels)
     elif norm_type == "group32":
         return GroupNorm32()
-    elif norm_type == 'layer':
+    elif norm_type == 'full_group':
         return nn.GroupNorm(num_groups=1, num_channels=channels)
+    elif norm_type == 'layer':
+        return nn.LayerNorm(num_channels=channels)
     elif (not norm_type) or (norm_type.lower() == 'none'):
         return nn.Identity()
     else:

@@ -4,12 +4,12 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import numpy as np
-from geosatcast.models.autoencoder import Encoder, Decoder, VAE
-from geosatcast.models.afnocast import AFNOCastLatent, AFNOCast
-from geosatcast.models.natcast import NATCastLatent, NATCast
 from torch.nn.parallel import DistributedDataParallel as DDP
 from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
+
+from geosatcast.models.autoencoder import Encoder, Decoder, VAE
+from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, Nowcaster
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor 
 
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
@@ -191,25 +191,27 @@ def main():
 
     
     inv_encoder = Encoder(**config["Inv_Encoder"])
-    
-    model_type = config["Model_Type"]
+    vae = load_vae(config["VAE_ckpt_path"])
 
+    model_type = config["Model_Type"]
+    
     if model_type == "AFNO":
-        vae = load_vae(config["AFNOCast"].pop("VAE_ckpt_path"))
-        latent_model = AFNOCastLatent(**config["AFNOCast"])
-        model = AFNOCast(
-            latent_model,
-            vae,
-            inv_encoder)
+        latent_model = AFNOCastLatent(**config["Model"])
 
     elif model_type == "NAT":
-        vae = load_vae(config["NATCast"].pop("VAE_ckpt_path"))
-        latent_model = NATCastLatent(**config["NATCast"])
-        model = NATCast(
-            latent_model,
-            vae,
-            inv_encoder)
+        latent_model = NATCastLatent(**config["Model"])
+    
+    elif model_type == "AFNONAT":
+        latent_model = AFNONATCastLatent(**config["Model"])
 
+    model = Nowcaster(
+        latent_model,
+        vae,
+        inv_encoder
+    )
+    if local_rank == 0:
+        print(model)
+        
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["Trainer"]["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.25, patience=config["Trainer"]["opt_patience"])
 

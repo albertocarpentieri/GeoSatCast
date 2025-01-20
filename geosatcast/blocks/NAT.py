@@ -107,7 +107,7 @@ class NATBlock2D(nn.Module):
     def __init__(
         self,
         dim,
-        num_heads,
+        num_blocks,
         kernel_size=7,
         dilation=None,
         mlp_ratio=4.0,
@@ -122,7 +122,7 @@ class NATBlock2D(nn.Module):
     ):
         super().__init__()
         self.dim = dim
-        self.num_heads = num_heads
+        self.num_blocks = num_blocks
         self.mlp_ratio = mlp_ratio
 
         self.norm1 = normalization(dim, norm)
@@ -131,7 +131,7 @@ class NATBlock2D(nn.Module):
             dim,
             kernel_size=kernel_size,
             dilation=dilation,
-            num_heads=num_heads,
+            num_heads=num_blocks,
             qkv_bias=qkv_bias,
             qk_scale=qk_scale,
             attn_drop=attn_drop,

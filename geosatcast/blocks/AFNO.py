@@ -4,22 +4,11 @@ import torch.nn.functional as F
 from geosatcast.utils import normalization, conv_nd
 import torch.utils.checkpoint as checkpoint
 
-
-class Linear(nn.Module):
-    def __init__(self,
-                 in_dim, 
-                 out_dim):
-        super().__init__()
-        self.layer = conv_nd(3, in_dim, out_dim)
-    
-    def forward(self,x):
-        x = self.layer(x)
-        return x
-    
-class AFNO3D(nn.Module):
+class AFNO2D(nn.Module):
     def __init__(
             self, hidden_size, num_blocks=8, sparsity_threshold=0.01,
-            hard_thresholding_fraction=1, hidden_size_factor=1, res_mult=1
+            hard_thresholding_fraction=1, hidden_size_factor=1, res_mult=1,
+            channel_first=True
     ):
         super().__init__()
         assert hidden_size % num_blocks == 0, f"hidden_size {hidden_size} should be divisble by num_blocks {num_blocks}"
@@ -31,6 +20,7 @@ class AFNO3D(nn.Module):
         self.hard_thresholding_fraction = hard_thresholding_fraction
         self.hidden_size_factor = hidden_size_factor
         self.scale = 0.02
+        self.channel_first = channel_first
         self.res_mult = res_mult
 
         self.w1 = nn.Parameter(
@@ -42,17 +32,18 @@ class AFNO3D(nn.Module):
 
     def forward(self, x):
         bias = x
-        x = x.permute(0, 2, 3, 4, 1).contiguous()
+        if self.channel_first:
+            x = x.permute(0, 2, 3, 1).contiguous()
         dtype = x.dtype
         x = x.float()
-        B, D, H, W, C = x.shape
+        B, H, W, C = x.shape
 
-        x = torch.fft.rfftn(x, dim=(1, 2, 3), norm="ortho")
-        x = x.view(B, D, H, W // 2 + 1, self.num_blocks, self.block_size)
+        x = torch.fft.rfftn(x, dim=(1, 2), norm="ortho")
+        x = x.view(B, H, W // 2 + 1, self.num_blocks, self.block_size)
 
-        o1_real = torch.zeros([B, D, H, W // 2 + 1, self.num_blocks, self.block_size * self.hidden_size_factor],
+        o1_real = torch.zeros([B, H, W // 2 + 1, self.num_blocks, self.block_size * self.hidden_size_factor],
                               device=x.device)
-        o1_imag = torch.zeros([B, D, H, W // 2 + 1, self.num_blocks, self.block_size * self.hidden_size_factor],
+        o1_imag = torch.zeros([B, H, W // 2 + 1, self.num_blocks, self.block_size * self.hidden_size_factor],
                               device=x.device)
         o2_real = torch.zeros(x.shape, device=x.device)
         o2_imag = torch.zeros(x.shape, device=x.device)
@@ -99,10 +90,11 @@ class AFNO3D(nn.Module):
         x = torch.stack([o2_real, o2_imag], dim=-1)
         x = F.softshrink(x, lambd=self.sparsity_threshold)
         x = torch.view_as_complex(x)
-        x = x.view(B, D, H, W // 2 + 1, C)
-        x = torch.fft.irfftn(x, s=(D, H*self.res_mult, W*self.res_mult), dim=(1, 2, 3), norm="ortho")
+        x = x.view(B, H, W // 2 + 1, C)
+        x = torch.fft.irfftn(x, s=(H*self.res_mult, W*self.res_mult), dim=(1, 2), norm="ortho")
         x = x.type(dtype)
-        x = x.permute(0, 4, 1, 2, 3).contiguous()
+        if self.channel_first:
+            x = x.permute(0, 3, 1, 2).contiguous()
         if self.res_mult>1:
             return x
         else:
@@ -113,28 +105,33 @@ class Mlp(nn.Module):
     def __init__(
             self,
             in_features, hidden_features=None, out_features=None,
-            act_layer=nn.GELU, drop=0.0
+            act_layer=nn.GELU, drop=0.0, channel_first=True
     ):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        if self.channel_first:
+            self.fc1 = conv_nd(2, in_features, hidden_features, 1)
+        else:
+            self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        
+        if self.channel_first:
+            self.fc1 = conv_nd(2, hidden_features, out_features, 1)
+        else:
+            self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop) if drop > 0 else nn.Identity()
 
     def forward(self, x):
-        x = x.permute(0, 2, 3, 4, 1).contiguous()
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
-        x = x.permute(0, 4, 1, 2, 3).contiguous()
         return x
 
 
-class AFNOBlock3d(nn.Module):
+class AFNOBlock2D(nn.Module):
     def __init__(
             self,
             dim,
@@ -148,14 +145,19 @@ class AFNOBlock3d(nn.Module):
             hard_thresholding_fraction=1.0,
             mlp_out_features=None,
             afno_res_mult=1,
+            channel_first=True,
 
     ):
         super().__init__()
         self.norm = norm
         self.afno_res_mult = afno_res_mult
         self.norm1 = normalization(dim, norm)
-        self.filter = AFNO3D(dim, num_blocks, sparsity_threshold,
-                             hard_thresholding_fraction, res_mult=afno_res_mult)
+        self.filter = AFNO2D(
+            dim, 
+            num_blocks, 
+            sparsity_threshold,
+            hard_thresholding_fraction, 
+            res_mult=afno_res_mult)
         self.norm2 = normalization(dim, norm)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(
@@ -163,7 +165,8 @@ class AFNOBlock3d(nn.Module):
             out_features=mlp_out_features,
             hidden_features=mlp_hidden_dim,
             act_layer=act_layer, 
-            drop=drop
+            drop=drop,
+            channel_first=channel_first
         )
         self.double_skip = double_skip
 

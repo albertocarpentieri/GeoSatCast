@@ -33,11 +33,11 @@ NATCast:
   forecast_depth: 1
   num_blocks: 1
   mlp_ratio: 4
-  norm: "layer"
+  norm: 
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
-  resume_path: #"/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-1/AFNOCast-1_29.pt"
+  resume_path: 
 
 Loss:
   type: "L1"

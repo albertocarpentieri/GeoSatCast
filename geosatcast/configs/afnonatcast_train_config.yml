@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1'
-Experiment: 'AFNOCast-512-1'
+ID: 'AFNONATCast-1'
+Experiment: 'AFNONATCast-512-1'
 
 seed: 0
 Dataset:
@@ -23,19 +23,21 @@ Inv_Encoder:
   min_ch: 32
   max_ch: 64
 
-Model_Type: "AFNO"
-
 VAE_ckpt_path: "/capstor/scratch/cscs/acarpent/Checkpoints/VAE/VAE-1/VAE-1_92.pt"
 
-AFNOCast:
+Model_Type: "AFNONAT"
+
+Model:
   hidden_dim: 192
   in_steps: 2
   embed_dim: 512
   embed_dim_out: 128
   forecast_depth: 1
-  num_blocks: 8
+  num_afno_blocks: 8
+  num_nat_blocks: 1
   mlp_ratio: 4
-  norm: 
+  afno_norm: 
+  nat_norm:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
