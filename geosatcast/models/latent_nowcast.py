@@ -9,19 +9,39 @@ from geosatcast.blocks.AFNO import AFNOBlock2D
 class AFNOCastLatent(nn.Module):
     def __init__(
             self,
+            hidden_dim,
+            in_steps=2,
             embed_dim=256,
+            embed_dim_out=128,
             forecast_depth=0,
             num_blocks=8,
             mlp_ratio=4,
             norm='group',
-            layer_scale="auto",
             **kwargs
         ):
         super().__init__()
 
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
+        self.embed_dim_out = embed_dim_out
+        self.in_steps = in_steps
         self.forecast_depth = forecast_depth
         
+        # compresses the time dimension to embed the input
+        self.proj = conv_nd(
+                 3,
+                 hidden_dim, 
+                 embed_dim,
+                 kernel_size=(self.in_steps,1,1),
+                 stride=(self.in_steps,1,1))
+        
+        self.reproj = conv_nd(
+                3,
+                embed_dim, 
+                embed_dim_out,
+                kernel_size=1,
+                stride=1
+                )
         if layer_scale == "auto":
             layer_scale=.5/(forecast_depth)
         elif layer_scale == "none":
@@ -38,16 +58,32 @@ class AFNOCastLatent(nn.Module):
             for _ in range(forecast_depth))
             )
 
-    def forward(self, x):
+    def forecast_step(self, x, inv):
+        x = torch.cat((x, inv), dim=1)
+        x = self.proj(x)
         x = x.squeeze(2).permute(0,2,3,1)
         x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
-        return x.permute(0,3,1,2).unsqueeze(2)
+        x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
+        return x
+    
+    def forward(self, x, inv, n_steps=1):
+        n_steps = min((n_steps, inv.shape[2]-self.in_steps+1))
+        yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
+        for i in range(n_steps):
+            yhat_ = self.forecast_step(x, inv[:,:,i:i+self.in_steps])
+            yhat[:,:,i:i+1] = yhat_
+            if i < n_steps-1:
+                x = torch.concat((x[:,:,-1:], yhat_), dim=2)
+        return yhat
 
 
 class NATCastLatent(nn.Module):
     def __init__(
             self,
+            hidden_dim,
+            in_steps=2,
             embed_dim=256,
+            embed_dim_out=128,
             forecast_depth=0,
             num_blocks=8,
             mlp_ratio=1,
@@ -56,11 +92,30 @@ class NATCastLatent(nn.Module):
             layer_scale="none"
     ):
         super().__init__()
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
+        self.embed_dim_out = embed_dim_out
+        self.in_steps = in_steps
         self.forecast_depth = forecast_depth
 
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size for _ in range(forecast_depth)]
+        
+        # compresses the time dimension to embed the input
+        self.proj = conv_nd(
+                    3,
+                    hidden_dim, 
+                    embed_dim,
+                    kernel_size=(self.in_steps,1,1),
+                    stride=(self.in_steps,1,1))
+        
+        self.reproj = conv_nd(
+                3,
+                embed_dim, 
+                embed_dim_out,
+                kernel_size=1,
+                stride=1
+                )
         
         if layer_scale == "auto":
             layer_scale=.5/(forecast_depth)
@@ -78,10 +133,22 @@ class NATCastLatent(nn.Module):
                 for i in range(forecast_depth))
                 )
     
-    def forward(self, x):
-        x = x.squeeze(2).permute(0,2,3,1)
+    def forecast_step(self, x, inv):
+        x = torch.cat((x, inv), dim=1)
+        x = self.proj(x).squeeze(2).permute(0,2,3,1)
         x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
-        return x.permute(0,3,1,2).unsqueeze(2)
+        x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
+        return x
+    
+    def forward(self, x, inv, n_steps=1):
+        n_steps = min((n_steps, inv.shape[2]-self.in_steps+1))
+        yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
+        for i in range(n_steps):
+            yhat_ = self.forecast_step(x, inv[:,:,i:i+self.in_steps])
+            yhat[:,:,i:i+1] = yhat_
+            if i < n_steps-1:
+                x = torch.concat((x[:,:,-1:], yhat_), dim=2)
+        return yhat
 
 
 class AFNONAT(nn.Module):
@@ -131,7 +198,10 @@ class AFNONAT(nn.Module):
 class AFNONATCastLatent(nn.Module):
     def __init__(
             self,
+            hidden_dim,
+            in_steps=2,
             embed_dim=256,
+            embed_dim_out=128,
             forecast_depth=1,
             afno_num_blocks=8,
             nat_num_blocks=8,
@@ -143,11 +213,30 @@ class AFNONATCastLatent(nn.Module):
             mode="sequential"
     ):
         super().__init__()
+        self.hidden_dim = hidden_dim
         self.embed_dim = embed_dim
+        self.embed_dim_out = embed_dim_out
+        self.in_steps = in_steps
         self.forecast_depth = forecast_depth
         self.mode = mode
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size for _ in range(forecast_depth)]
+        
+        # compresses the time dimension to embed the input
+        self.proj = conv_nd(
+                    3,
+                    hidden_dim, 
+                    embed_dim,
+                    kernel_size=(self.in_steps,1,1),
+                    stride=(self.in_steps,1,1))
+        
+        self.reproj = conv_nd(
+                3,
+                embed_dim, 
+                embed_dim_out,
+                kernel_size=1,
+                stride=1
+                )
         
         if layer_scale == "auto":
             layer_scale=.5/(forecast_depth * 2)
@@ -170,88 +259,48 @@ class AFNONATCastLatent(nn.Module):
         
         self.forecast = nn.Sequential(*forecast)
 
-    def forward(self, x):
-        x = x.squeeze(2).permute(0,2,3,1)
+    def forecast_step(self, x, inv):
+        x = torch.cat((x, inv), dim=1)
+        x = self.proj(x).squeeze(2).permute(0,2,3,1)
         x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
-        return x.permute(0,3,1,2).unsqueeze(2)
-
-
-class Nowcaster(nn.Module):
-    def __init__(
-            self,
-            latent_model,
-            autoencoder,
-            in_steps,
-    ):
-        super().__init__()
-
-        self.latent_model = latent_model
-        self.autoencoder = autoencoder
-        self.in_steps = in_steps
+        x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
+        return x
     
     def forward(self, x, inv, n_steps=1):
         n_steps = min((n_steps, inv.shape[2]-self.in_steps+1))
         yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
         for i in range(n_steps):
-            z = torch.cat((x, inv[:,:,i:i+self.in_steps]), dim=1)
-            z = self.autoencoder.encode(z)
-            z = self.latent_model(z)
-            z = self.autoencoder.decode(z)
-            yhat[:,:,i:i+1] = z
+            yhat_ = self.forecast_step(x, inv[:,:,i:i+self.in_steps])
+            yhat[:,:,i:i+1] = yhat_
             if i < n_steps-1:
-                x = torch.concat((x[:,:,-1:], z), dim=2)
+                x = torch.concat((x[:,:,-1:], yhat_), dim=2)
         return yhat
+
+class Nowcaster(nn.Module):
+    def __init__(
+            self,
+            latent_model,
+            vae,
+            inv_encoder
+    ):
+        super().__init__()
+
+        self.latent_model = latent_model
+        self.vae = vae
+        self.inv_encoder = inv_encoder
+        for param in self.vae.parameters():
+            param.requires_grad = False
+    
+    def latent_forward(self, x, inv, n_steps=48):
+        x, _ = self.vae.encode(x)
+        # encode invariants
+        inv = self.inv_encoder(inv)
+        x = self.latent_model(x, inv, n_steps)
+        return x 
+    
+    def forward(self, x, inv, n_steps):
+        return self.vae.decode(self.latent_forward(x, inv, n_steps))
 
 
 if __name__ == "__main__":
-    from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder 
-    import torch 
-
-    encoder = Encoder(
-        in_dim=14, 
-        levels=2, 
-        min_ch=128,
-        max_ch=512, 
-        extra_resblock_levels=[0,1], 
-        downsampling_mode='stride', 
-        norm=None,
-        kernel_sizes=[(2,3,3), (1,3,3)],
-        resample_factors=[(2,2,2), (1,2,2)])
-
-    decoder = Decoder(
-        in_dim=512, 
-        out_dim=11, 
-        levels=2, 
-        min_ch=128, 
-        max_ch=512, 
-        extra_resblock_levels=[0,1], 
-        upsampling_mode='stride', 
-        norm=None,
-        kernel_size=(1,3,3),
-        resample_factor=(1,2,2)
-    )
-
-    autoencoder = AutoEncoder(encoder, decoder).to("cuda")
-    x = torch.randn((1,11,2,256,256)).to("cuda")
-    inv = torch.randn((1,3,66,256,256)).to("cuda")
-    
-    
-    latent_model = AFNOCastLatent(
-            embed_dim=512,
-            forecast_depth=1,
-            num_blocks=8,
-            mlp_ratio=4,
-            norm='none',
-            layer_scale="auto").to("cuda")
-    latent_model = AFNONATCastLatent(
-        embed_dim=512,
-        forecast_depth=1,
-    ).to("cuda")
-    nowcaster = Nowcaster(
-        latent_model,
-        autoencoder,
-        in_steps=2).to("cuda")
-    
-    yhat = nowcaster(x, inv, n_steps=64)
-    print(yhat.shape)
-
+    pass

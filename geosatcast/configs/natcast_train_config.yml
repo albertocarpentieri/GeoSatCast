@@ -1,4 +1,4 @@
-ID: 'NATCast-3'
+ID: 'NATCast-512-8'
 Experiment: 'NATCast-512-8'
 
 seed: 0
@@ -41,7 +41,7 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/NATCast-512-8/NATCast-512-8_25.pt"
 
 Loss:
   type: "L1"

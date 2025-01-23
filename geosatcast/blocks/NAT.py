@@ -172,6 +172,7 @@ class NATBlock2D(nn.Module):
         x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
         return x
 
+
 if __name__ == "__main__":
     nat_block = NATBlock2D(512, 1, (3,3))
     x = torch.randn((1,64,64,512))

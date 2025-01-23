@@ -10,6 +10,8 @@ from torch.utils.tensorboard import SummaryWriter
 import logging
 import random
 
+def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def set_global_seed(seed):
     # Python random
     random.seed(seed)

@@ -8,9 +8,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
 
-from geosatcast.models.autoencoder import Encoder, Decoder, VAE
+from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, Nowcaster
-from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor 
+from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters
+
 
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
     model.eval()
@@ -60,13 +61,12 @@ def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
     y = y.to(device, non_blocking=True).detach()
     inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
    
-    # encode y to compute loss in the latent space
-    yz = model.module.vae.encode(y.detach())[0]
-    yhatz = model.module.latent_forward(x, inv, n_steps=n_forecast_steps)
-    loss = (yz - yhatz).abs().mean()
+    yhat = model(x, inv, n_steps=n_forecast_steps)
+    res = (y - yhat).abs()
+    loss = res.mean()
     
     if per_ch:
-        loss_per_ch = (y - model.module.vae.decode(yhatz)).abs().mean(dim=(0,2,3,4))
+        loss_per_ch = res.detach().mean(dim=(0,2,3,4))
         return loss, loss_per_ch
     else:
         return loss
@@ -190,9 +190,10 @@ def main():
         validation=True)
 
     
-    inv_encoder = Encoder(**config["Inv_Encoder"])
-    vae = load_vae(config["VAE_ckpt_path"])
-
+    encoder = Encoder(**config["Encoder"])
+    decoder = Decoder(**config["Decoder"])
+    autoencoder = AutoEncoder(encoder, decoder)
+    in_steps = config["Model"].pop("in_steps")
     model_type = config["Model_Type"]
     
     if model_type == "AFNO":
@@ -203,14 +204,18 @@ def main():
     
     elif model_type == "AFNONAT":
         latent_model = AFNONATCastLatent(**config["Model"])
+        print("mode:", latent_model.mode)
 
     model = Nowcaster(
         latent_model,
-        vae,
-        inv_encoder
+        autoencoder,
+        in_steps=in_steps
     )
     if local_rank == 0:
         print(model)
+        print(count_parameters(encoder))
+        print(count_parameters(decoder))
+        print(count_parameters(latent_model))
         
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["Trainer"]["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.25, patience=config["Trainer"]["opt_patience"])

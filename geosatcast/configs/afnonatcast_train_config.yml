@@ -1,5 +1,5 @@
-ID: 'AFNONATCast-4'
-Experiment: 'AFNONATCast-512-6'
+ID: 'AFNONATCast-512-4-parallel'
+Experiment: 'AFNONATCast-512-4-parallel'
 
 seed: 0
 Dataset:
@@ -33,13 +33,14 @@ Model:
   embed_dim: 512
   embed_dim_out: 128
   forecast_depth: 4
-  afno_num_blocks: 8
+  afno_num_blocks: 4
   nat_num_blocks: 1
   mlp_ratio: 4
   afno_norm: 
   nat_norm:
-  kernel_size: [5, 5, 3, 3, 3, 3]
+  kernel_size: [5, 5, 3, 3]
   layer_scale: "auto"
+  mode: "parallel"
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"

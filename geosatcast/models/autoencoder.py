@@ -6,8 +6,20 @@ from geosatcast.utils import sample_from_standard_normal, kl_from_standard_norma
 from geosatcast.utils import activation, normalization, conv_nd
 
 class Encoder(nn.Module):
-    def __init__(self, in_dim=1, levels=2, min_ch=64, max_ch=64, extra_resblock_levels=[], downsampling_mode='resblock', norm=None):
+    def __init__(
+        self, 
+        in_dim=1, 
+        levels=2, 
+        min_ch=64,
+        max_ch=64, 
+        extra_resblock_levels=[], 
+        downsampling_mode='resblock', 
+        norm=None,
+        kernel_sizes=[(1,3,3), (1,3,3)],
+        resample_factors=[(1,2,2), (1,2,2)]):
+        
         super().__init__()
+        
         self.max_ch = max_ch
         self.min_ch = min_ch
         channels = np.hstack((in_dim, np.arange(1, (levels + 1)) * min_ch))
@@ -15,21 +27,21 @@ class Encoder(nn.Module):
         channels[-1] = max_ch
 
         sequence = []
-        kernel_size = (1, 3, 3)
-        resample_factor = (1, 2, 2)
         res_block_fun = ResBlock3D
 
         for i in range(levels):
+            kernel_size = kernel_sizes[i]
+            resample_factor = resample_factors[i]
             in_channels = int(channels[i])
             out_channels = int(channels[i + 1])
 
             if i in extra_resblock_levels:
-                sequence.append(res_block_fun(in_channels, out_channels, resample=None, kernel_size=kernel_size, norm=norm))
+                sequence.append(res_block_fun(in_channels, out_channels, resample=None, kernel_size=(1,3,3), norm=norm))
 
             if downsampling_mode == 'resblock':
                 sequence.append(res_block_fun(out_channels, out_channels, resample='down', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm))
             elif downsampling_mode == 'stride':
-                sequence.append(conv_nd(3, out_channels, out_channels, kernel_size=resample_factor, stride=resample_factor))
+                sequence.append(conv_nd(3, out_channels, out_channels, kernel_size=resample_factor, stride=resample_factor, padding_mode="reflect"))
 
         self.model = nn.Sequential(*sequence)
 
@@ -38,8 +50,21 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, in_dim=1, out_dim=1, levels=2, min_ch=64, max_ch=64, extra_resblock_levels=[], upsampling_mode='stride', norm=None):
+    def __init__(
+        self, 
+        in_dim=1, 
+        out_dim=1, 
+        levels=2, 
+        min_ch=64, 
+        max_ch=64, 
+        extra_resblock_levels=[], 
+        upsampling_mode='stride', 
+        norm=None,
+        kernel_size=(1,3,3),
+        resample_factor=(1,2,2)):
+        
         super().__init__()
+        
         self.max_ch = max_ch
         self.min_ch = min_ch
         channels = np.hstack((in_dim, np.arange(1, (levels + 1)) * min_ch))
@@ -48,8 +73,6 @@ class Decoder(nn.Module):
         channels[-1] = max_ch
 
         sequence = []
-        kernel_size = (1, 3, 3)
-        resample_factor = (1, 2, 2)
         stride_conv = nn.ConvTranspose3d
         res_block_fun = ResBlock3D
 
@@ -96,3 +119,18 @@ class VAE(nn.Module):
         else:
             z = self.decode(mean)
         return z, mean, log_var
+
+class AutoEncoder(nn.Module):
+    def __init__(self, encoder, decoder):
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def encode(self, x):
+        return self.encoder(x)
+        
+    def decode(self, z):
+        return self.decoder(z)
+
+    def forward(self, x):
+        return self.decode(self.encode(x))

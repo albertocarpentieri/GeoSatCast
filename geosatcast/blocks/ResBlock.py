@@ -16,16 +16,16 @@ class ResBlock3D(nn.Module):
             **kwargs
     ):
         super().__init__(**kwargs)
-        self.proj = nn.Conv3d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+        self.proj = nn.Conv3d(in_channels, out_channels, kernel_size=1, padding_mode="reflect") if in_channels != out_channels else nn.Identity()
         padding = tuple(k // 2 for k in kernel_size)
         if resample == "down":
             self.resample = nn.AvgPool3d(resample_factor, ceil_mode=True)
             self.conv1 = nn.Conv3d(in_channels, out_channels,
                                    kernel_size=kernel_size, stride=resample_factor,
-                                   padding=padding)
+                                   padding=padding, padding_mode="reflect")
             self.conv2 = nn.Conv3d(out_channels, out_channels,
                                    kernel_size=kernel_size, 
-                                   padding=padding)
+                                   padding=padding, padding_mode="reflect")
         elif resample == "up":
             self.resample = nn.Upsample(
                 scale_factor=resample_factor, mode=upsampling_mode)
@@ -40,9 +40,9 @@ class ResBlock3D(nn.Module):
         else:
             self.resample = nn.Identity()
             self.conv1 = nn.Conv3d(in_channels, out_channels,
-                                   kernel_size=kernel_size, padding=padding)
+                                   kernel_size=kernel_size, padding=padding, padding_mode="reflect")
             self.conv2 = nn.Conv3d(out_channels, out_channels,
-                                   kernel_size=kernel_size, padding=padding)
+                                   kernel_size=kernel_size, padding=padding, padding_mode="reflect")
         
         if isinstance(act, str):
             act = (act, act)
