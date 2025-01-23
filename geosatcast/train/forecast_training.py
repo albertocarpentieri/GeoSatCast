@@ -43,7 +43,7 @@ def validate(model, n_forecast_steps, val_loader, device, logger, writer, config
     return avg_loss
 
 def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
-    in_steps = model.module.latent_model.in_steps
+    in_steps = model.module.in_steps
     
     # open batch
     x, _, inv, sza = batch
@@ -143,8 +143,11 @@ def train(
             logger.info(f"Epoch {epoch}: Avg Loss {avg_loss:.6f}")
             # Save the model at the end of each epoch
             save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config)
-
-        val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
+        
+        with torch.no_grad():
+            model.eval()
+            val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
+        
         scheduler.step(val_loss)
         
         # log the learning rate

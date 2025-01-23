@@ -4,7 +4,7 @@ import torch.distributed as dist
 import numpy as np
 from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
-from geosatcast.models.autoencoder import VAE, Encoder, Decoder
+from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
 from torch.utils.tensorboard import SummaryWriter
 import logging
@@ -179,7 +179,7 @@ def load_vae(ckpt_path):
     vae.load_state_dict(state_dict)
     return vae
 
-def load_nowcaster(ckpt_path, return_config=False):
+def load_latent_nowcaster(ckpt_path, return_config=False):
     """
     Loads model, optimizer, and scheduler states from a checkpoint.
     """
@@ -204,6 +204,40 @@ def load_nowcaster(ckpt_path, return_config=False):
         latent_model,
         vae,
         inv_encoder
+    )
+    state_dict = {
+        k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
+    }
+    model.load_state_dict(state_dict)
+    if return_config:
+        return model, config
+    return model
+
+def load_latent_nowcaster(ckpt_path, return_config=False, in_steps=2):
+    """
+    Loads model, optimizer, and scheduler states from a checkpoint.
+    """
+    
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    config = ckpt["config"]
+    encoder = Encoder(**config["Encoder"])
+    decoder = Decoder(**config["Decoder"])
+    autoencoder = AutoEncoder(encoder, decoder)
+    model_type = config["Model_Type"]
+    
+    if model_type == "AFNO":
+        latent_model = AFNOCastLatent(**config["Model"])
+
+    elif model_type == "NAT":
+        latent_model = NATCastLatent(**config["Model"])
+    
+    elif model_type == "AFNONAT":
+        latent_model = AFNONATCastLatent(**config["Model"])
+
+    model = Nowcaster(
+        latent_model,
+        autoencoder,
+        in_steps=in_steps
     )
     state_dict = {
         k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()

@@ -37,11 +37,12 @@ class Encoder(nn.Module):
 
             if i in extra_resblock_levels:
                 sequence.append(res_block_fun(in_channels, out_channels, resample=None, kernel_size=(1,3,3), norm=norm))
+                in_channels = out_channels
 
             if downsampling_mode == 'resblock':
-                sequence.append(res_block_fun(out_channels, out_channels, resample='down', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm))
+                sequence.append(res_block_fun(in_channels, out_channels, resample='down', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm))
             elif downsampling_mode == 'stride':
-                sequence.append(conv_nd(3, out_channels, out_channels, kernel_size=resample_factor, stride=resample_factor, padding_mode="reflect"))
+                sequence.append(conv_nd(3, in_channels, out_channels, kernel_size=resample_factor, stride=resample_factor, padding_mode="reflect"))
 
         self.model = nn.Sequential(*sequence)
 
