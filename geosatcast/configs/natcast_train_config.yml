@@ -1,5 +1,5 @@
-ID: 'NATCast-1'
-Experiment: 'NATCast-512-1'
+ID: 'NATCast-3'
+Experiment: 'NATCast-512-8'
 
 seed: 0
 Dataset:
@@ -32,10 +32,12 @@ Model:
   in_steps: 2
   embed_dim: 512
   embed_dim_out: 128
-  forecast_depth: 1
+  forecast_depth: 8
   num_blocks: 1
   mlp_ratio: 4
   norm: 
+  layer_scale: "auto"
+  kernel_size: [5, 5, 5, 5, 3, 3, 3, 3]
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
@@ -46,7 +48,7 @@ Loss:
 
 Trainer:
   opt_patience: 3
-  lr: 0.0005
+  lr: 0.001
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/NATCast/'
   max_epochs: 100
   n_steps: 1

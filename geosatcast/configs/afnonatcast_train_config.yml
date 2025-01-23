@@ -1,5 +1,5 @@
-ID: 'AFNONATCast-1'
-Experiment: 'AFNONATCast-512-1'
+ID: 'AFNONATCast-4'
+Experiment: 'AFNONATCast-512-6'
 
 seed: 0
 Dataset:
@@ -32,15 +32,17 @@ Model:
   in_steps: 2
   embed_dim: 512
   embed_dim_out: 128
-  forecast_depth: 1
+  forecast_depth: 4
   afno_num_blocks: 8
   nat_num_blocks: 1
   mlp_ratio: 4
   afno_norm: 
   nat_norm:
+  kernel_size: [5, 5, 3, 3, 3, 3]
+  layer_scale: "auto"
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
   resume_path: 
 
 Loss:
@@ -48,7 +50,7 @@ Loss:
 
 Trainer:
   opt_patience: 3
-  lr: 0.0005
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNOCast/'
+  lr: 0.001
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNONATCast/'
   max_epochs: 100
   n_steps: 1

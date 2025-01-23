@@ -42,14 +42,18 @@ class AFNOCastLatent(nn.Module):
                 kernel_size=1,
                 stride=1
                 )
-
+        if layer_scale == "auto":
+            layer_scale=.5/(forecast_depth)
+        elif layer_scale == "none":
+            layer_scale = None
         self.forecast = nn.Sequential(
             *(AFNOBlock2D(
                     dim=embed_dim,
                     mlp_ratio=mlp_ratio, 
                     num_blocks=num_blocks,
                     norm=norm,
-                    channel_first=False
+                    channel_first=False,
+                    layer_scale=layer_scale
                 )
             for _ in range(forecast_depth))
             )
@@ -58,7 +62,7 @@ class AFNOCastLatent(nn.Module):
         x = torch.cat((x, inv), dim=1)
         x = self.proj(x)
         x = x.squeeze(2).permute(0,2,3,1)
-        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=True)
+        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
         x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
         return x
     
@@ -84,7 +88,8 @@ class NATCastLatent(nn.Module):
             num_blocks=8,
             mlp_ratio=1,
             kernel_size=3,
-            norm="none"
+            norm="none",
+            layer_scale="none"
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -112,13 +117,18 @@ class NATCastLatent(nn.Module):
                 stride=1
                 )
         
+        if layer_scale == "auto":
+            layer_scale=.5/(forecast_depth)
+        elif layer_scale == "none":
+            layer_scale = None
         self.forecast = nn.Sequential(
                 *(NATBlock2D(
                         dim=embed_dim,
                         mlp_ratio=mlp_ratio, 
                         num_blocks=num_blocks,
                         norm=norm,
-                        kernel_size=kernel_size[i]
+                        kernel_size=kernel_size[i],
+                        layer_scale=layer_scale
                     )
                 for i in range(forecast_depth))
                 )
@@ -126,7 +136,7 @@ class NATCastLatent(nn.Module):
     def forecast_step(self, x, inv):
         x = torch.cat((x, inv), dim=1)
         x = self.proj(x).squeeze(2).permute(0,2,3,1)
-        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=True)
+        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
         x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
         return x
     
@@ -154,7 +164,8 @@ class AFNONATCastLatent(nn.Module):
             mlp_ratio=1,
             kernel_size=3,
             nat_norm="none",
-            afno_norm="none"
+            afno_norm="none",
+            layer_scale="auto"
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -182,6 +193,11 @@ class AFNONATCastLatent(nn.Module):
                 stride=1
                 )
         
+        if layer_scale == "auto":
+            layer_scale=.5/(forecast_depth * 2)
+        elif layer_scale == "none":
+            layer_scale = None
+
         forecast = []
         for i in range(forecast_depth):
             forecast.append(AFNOBlock2D(
@@ -189,22 +205,24 @@ class AFNONATCastLatent(nn.Module):
                 mlp_ratio=mlp_ratio, 
                 num_blocks=afno_num_blocks,
                 norm=afno_norm,
-                channel_first=False
+                channel_first=False,
+                layer_scale=layer_scale
             ))
             forecast.append(NATBlock2D(
                 dim=embed_dim,
                 mlp_ratio=mlp_ratio, 
                 num_blocks=nat_num_blocks,
                 norm=nat_norm,
-                kernel_size=kernel_size[i]
+                kernel_size=kernel_size[i],
+                layer_scale=layer_scale
             ))
-        self.forecast = nn.ModuleList(forecast)
+        self.forecast = nn.Sequential(*forecast)
         
     
     def forecast_step(self, x, inv):
         x = torch.cat((x, inv), dim=1)
         x = self.proj(x).squeeze(2).permute(0,2,3,1)
-        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=True)
+        x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
         x = self.reproj(x.permute(0,3,1,2).unsqueeze(2))
         return x
     

@@ -5,6 +5,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder
+from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
 from torch.utils.tensorboard import SummaryWriter
 import logging
 import random
@@ -175,3 +176,35 @@ def load_vae(ckpt_path):
     }
     vae.load_state_dict(state_dict)
     return vae
+
+def load_nowcaster(ckpt_path):
+    """
+    Loads model, optimizer, and scheduler states from a checkpoint.
+    """
+    
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    config = ckpt["config"]
+    inv_encoder = Encoder(**config["Inv_Encoder"])
+    vae = load_vae(config["VAE_ckpt_path"])
+
+    model_type = config["Model_Type"]
+    
+    if model_type == "AFNO":
+        latent_model = AFNOCastLatent(**config["Model"])
+
+    elif model_type == "NAT":
+        latent_model = NATCastLatent(**config["Model"])
+    
+    elif model_type == "AFNONAT":
+        latent_model = AFNONATCastLatent(**config["Model"])
+
+    model = Nowcaster(
+        latent_model,
+        vae,
+        inv_encoder
+    )
+    state_dict = {
+        k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
+    }
+    model.load_state_dict(state_dict)
+    return model

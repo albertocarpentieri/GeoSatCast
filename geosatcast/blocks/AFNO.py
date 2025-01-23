@@ -146,6 +146,7 @@ class AFNOBlock2D(nn.Module):
             mlp_out_features=None,
             afno_res_mult=1,
             channel_first=True,
+            layer_scale=None
 
     ):
         super().__init__()
@@ -170,18 +171,42 @@ class AFNOBlock2D(nn.Module):
             channel_first=channel_first
         )
         self.double_skip = double_skip
-
+        self.layer_scale = False
+        if layer_scale is not None and type(layer_scale) in [int, float]:
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+            self.gamma2 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+    
     def forward(self, x):
+        if not self.layer_scale:
+            residual = x
+            x = self.norm1(x)
+            x = self.filter(x)
+            if self.afno_res_mult > 1:
+                residual = F.interpolate(residual, x.shape[2:])
+            if self.double_skip:
+                x = x + residual
+                residual = x
+
+            x = self.norm2(x)
+            x = self.mlp(x)
+            x = x + residual
+            return x
         residual = x
         x = self.norm1(x)
         x = self.filter(x)
         if self.afno_res_mult > 1:
             residual = F.interpolate(residual, x.shape[2:])
         if self.double_skip:
-            x = x + residual
+            x = self.gamma1 * x + residual
             residual = x
 
         x = self.norm2(x)
         x = self.mlp(x)
-        x = x + residual
+        x = self.gamma2 * x + residual
         return x
+        
