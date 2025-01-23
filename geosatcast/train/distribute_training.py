@@ -177,7 +177,7 @@ def load_vae(ckpt_path):
     vae.load_state_dict(state_dict)
     return vae
 
-def load_nowcaster(ckpt_path):
+def load_nowcaster(ckpt_path, return_config=False):
     """
     Loads model, optimizer, and scheduler states from a checkpoint.
     """
@@ -207,4 +207,6 @@ def load_nowcaster(ckpt_path):
         k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
     }
     model.load_state_dict(state_dict)
+    if return_config:
+        return model, config
     return model

@@ -127,7 +127,6 @@ class NATBlock2D(nn.Module):
 
         self.norm1 = normalization(dim, norm)
         extra_args = {"rel_pos_bias": True} if is_natten_post_017 else {"bias": True}
-        print(extra_args)
         self.attn = Nat2D(
             dim,
             kernel_size=kernel_size,

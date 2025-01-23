@@ -165,7 +165,7 @@ class AFNONATCastLatent(nn.Module):
             kernel_size=3,
             nat_norm="none",
             afno_norm="none",
-            layer_scale="auto"
+            layer_scale="none"
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
