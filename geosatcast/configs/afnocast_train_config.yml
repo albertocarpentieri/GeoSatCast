@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1'
-Experiment: 'AFNOCast-512-1'
+ID: 'AFNOCast-1-clip'
+Experiment: 'AFNOCast-512-1-clip'
 
 seed: 0
 Dataset:
@@ -7,12 +7,15 @@ Dataset:
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
   input_seq_len: 3
   num_workers: 16
+  prefetch_factor: 
   train_length: 128000
   val_length: 12800
   field_size: 256
   train_years: [2017, 2018, 2019]
   val_years: [2020]
   batch_size: 64
+  seed: 0
+  load_full: True
 
 Encoder:
   in_dim: 14
@@ -43,7 +46,7 @@ Model:
   in_steps: 2
   embed_dim: 512
   forecast_depth: 1
-  num_blocks: 8
+  num_blocks: 1
   mlp_ratio: 4
   norm: 
   layer_scale: "auto"
@@ -61,3 +64,5 @@ Trainer:
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNOCast/'
   max_epochs: 100
   n_steps: 1
+  gradient_clip: 1
+  warmup_steps: 2000

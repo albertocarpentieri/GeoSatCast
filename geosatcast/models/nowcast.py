@@ -180,13 +180,15 @@ class Nowcaster(nn.Module):
     def __init__(
             self,
             latent_model,
-            autoencoder,
+            encoder,
+            decoder,
             in_steps,
     ):
         super().__init__()
 
         self.latent_model = latent_model
-        self.autoencoder = autoencoder
+        self.encoder = encoder
+        self.decoder = decoder
         self.in_steps = in_steps
     
     def forward(self, x, inv, n_steps=1):
@@ -194,9 +196,9 @@ class Nowcaster(nn.Module):
         yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
         for i in range(n_steps):
             z = torch.cat((x, inv[:,:,i:i+self.in_steps]), dim=1)
-            z = self.autoencoder.encode(z)
+            z = self.encoder(z)
             z = self.latent_model(z)
-            z = self.autoencoder.decode(z)
+            z = self.decoder(z)
             yhat[:,:,i:i+1] = z
             if i < n_steps-1:
                 x = torch.concat((x[:,:,-1:], z), dim=2)

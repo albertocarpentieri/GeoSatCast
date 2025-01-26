@@ -7,6 +7,7 @@ from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistri
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import LambdaLR
 import logging
 import random
 
@@ -57,6 +58,9 @@ def get_dataloader(
     field_size=128,
     num_workers=24,
     batch_size=8,
+    prefetch_factor=8,
+    seed=0,
+    load_full=True
     ):
 
     # Get the current GPU and process information
@@ -74,23 +78,25 @@ def get_dataloader(
         field_size,
         length,
         validation,
-        local_rank+1
+        local_rank+1,
+        load_full
         )
-
+    if seed == "rank":
+        seed = local_rank
     sampler = WorkerDistributedSampler(
         dataset, 
         num_replicas=torch.distributed.get_world_size(),
         rank=local_rank,
         shuffle=not validation,
-        seed=0)
+        seed=seed) # set to zero if you want all processes to go in the same time indices
 
     dataloader = DataLoader(
         dataset,
         num_workers=num_workers,
         batch_size=batch_size,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=8,
+        # persistent_workers=True,
+        prefetch_factor=prefetch_factor,
         sampler=sampler)
     
     return dataloader, sampler
@@ -222,7 +228,6 @@ def load_latent_nowcaster(ckpt_path, return_config=False, in_steps=2):
     config = ckpt["config"]
     encoder = Encoder(**config["Encoder"])
     decoder = Decoder(**config["Decoder"])
-    autoencoder = AutoEncoder(encoder, decoder)
     model_type = config["Model_Type"]
     
     if model_type == "AFNO":
@@ -236,7 +241,8 @@ def load_latent_nowcaster(ckpt_path, return_config=False, in_steps=2):
 
     model = Nowcaster(
         latent_model,
-        autoencoder,
+        encoder,
+        decoder,
         in_steps=in_steps
     )
     state_dict = {
@@ -246,3 +252,15 @@ def load_latent_nowcaster(ckpt_path, return_config=False, in_steps=2):
     if return_config:
         return model, config
     return model
+
+class WarmupLambdaLR(LambdaLR):
+    def __init__(self, optimizer, num_warmup_steps, lr_lambda):
+        super().__init__(optimizer, lr_lambda)
+        self.num_warmup_steps = num_warmup_steps
+
+def Warmup_Scheduler(optimizer, num_warmup_steps):
+    def lr_lambda(step):
+        if step < num_warmup_steps:
+            return step / num_warmup_steps
+        return 1.0
+    return WarmupLambdaLR(optimizer, num_warmup_steps, lr_lambda)

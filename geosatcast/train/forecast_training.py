@@ -10,8 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, Nowcaster
-from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters
-
+from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters, Warmup_Scheduler
 
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
     model.eval()
@@ -80,6 +79,7 @@ def train(
     train_sampler, 
     optimizer, 
     scheduler, 
+    warmup_scheduler,
     logger,
     writer):
 
@@ -88,7 +88,7 @@ def train(
     model = DDP(model, device_ids=[rank])
 
     # Initialize GradScaler for mixed precision
-    scaler = torch.amp.GradScaler('cuda')
+    # scaler = torch.amp.GradScaler('cuda')
 
     # Check if we should resume from a checkpoint
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
@@ -116,18 +116,25 @@ def train(
         for batch in train_loader:
             optimizer.zero_grad()
             # Mixed precision forward and loss computation
-            with torch.amp.autocast('cuda'):
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                 loss = compute_loss(model, batch, n_forecast_steps, device)
             
             # Backpropagation with gradient scaling
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            
+            # scaler.scale(loss).backward()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
+            # scaler.step(optimizer)
+            optimizer.step()
+            # scaler.update()
 
             # Accumulate loss for averaging
             total_loss += loss.item()
             num_batches += 1
-
+            
+            if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
+                warmup_scheduler.step()
+                
             if rank == 0:
                 if num_batches % 50 == 0:
                     logger.info(f"Epoch {epoch}, Step {num_batches}: Loss {loss:.6f}")
@@ -148,15 +155,20 @@ def train(
             model.eval()
             val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
         
-        scheduler.step(val_loss)
         
-        # log the learning rate
-        lr = scheduler.get_last_lr()[0] 
-        logger.info(f"Epoch {epoch}: Learning Rate {lr:.6f}")
+        if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
+            lr = warmup_scheduler.get_last_lr()[0] 
+            logger.info(f"Epoch {epoch}: Warm-up Learning Rate {lr:.6f}")
+        else:
+            scheduler.step(val_loss)
+            lr = scheduler.get_last_lr()[0] 
+            logger.info(f"Epoch {epoch}: Learning Rate {lr:.6f}")
+        
         if rank == 0:
             writer.add_scalar(f"Train/LR", lr, epoch)
 
 def main():
+    set_global_seed(1996)
     CONFIG_PATH = sys.argv[1]
     with open(CONFIG_PATH, "r") as f:
         config = load(f, Loader)
@@ -195,7 +207,6 @@ def main():
     
     encoder = Encoder(**config["Encoder"])
     decoder = Decoder(**config["Decoder"])
-    autoencoder = AutoEncoder(encoder, decoder)
     in_steps = config["Model"].pop("in_steps")
     model_type = config["Model_Type"]
     
@@ -211,7 +222,8 @@ def main():
 
     model = Nowcaster(
         latent_model,
-        autoencoder,
+        encoder,
+        decoder,
         in_steps=in_steps
     )
     if local_rank == 0:
@@ -222,7 +234,11 @@ def main():
         
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["Trainer"]["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.25, patience=config["Trainer"]["opt_patience"])
-
+    if config["Trainer"]["warmup_steps"]:
+        warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"])
+    else:
+        warmup_scheduler = None
+    
     train(
         local_rank, 
         config, 
@@ -231,7 +247,8 @@ def main():
         val_dataloader, 
         train_sampler, 
         optimizer, 
-        scheduler, 
+        scheduler,
+        warmup_scheduler, 
         logger,
         writer)
 

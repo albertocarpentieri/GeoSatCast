@@ -280,26 +280,28 @@ class Nowcaster(nn.Module):
     def __init__(
             self,
             latent_model,
-            vae,
+            encoder,
+            decoder,
             inv_encoder
     ):
         super().__init__()
 
         self.latent_model = latent_model
-        self.vae = vae
+        self.encoder = encoder
+        self.decoder = decoder
         self.inv_encoder = inv_encoder
-        for param in self.vae.parameters():
+        for param in self.autoencoder.parameters():
             param.requires_grad = False
     
     def latent_forward(self, x, inv, n_steps=48):
-        x, _ = self.vae.encode(x)
+        x = self.encoder(x)
         # encode invariants
         inv = self.inv_encoder(inv)
         x = self.latent_model(x, inv, n_steps)
         return x 
     
     def forward(self, x, inv, n_steps):
-        return self.vae.decode(self.latent_forward(x, inv, n_steps))
+        return self.decoder(self.latent_forward(x, inv, n_steps))
 
 
 if __name__ == "__main__":

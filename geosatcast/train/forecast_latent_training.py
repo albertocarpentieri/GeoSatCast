@@ -8,7 +8,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
 
-from geosatcast.models.autoencoder import Encoder, Decoder, VAE
+from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 from geosatcast.models.latent_nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, Nowcaster
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters
 
