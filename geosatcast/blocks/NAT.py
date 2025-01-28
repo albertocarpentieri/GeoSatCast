@@ -22,12 +22,11 @@ class Mlp(nn.Module):
         hidden_features = hidden_features or in_features
         
         self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = activation(act)
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        
         torch.nn.init.xavier_uniform_(self.fc1.weight)
         torch.nn.init.zeros_(self.fc1.bias)
-        
-        self.act = activation(act)
-        
-        self.fc2 = nn.Linear(hidden_features, out_features)
         torch.nn.init.xavier_uniform_(self.fc2.weight)
         torch.nn.init.zeros_(self.fc2.bias)
         
@@ -150,6 +149,10 @@ class NATBlock2D(nn.Module):
             proj_drop=drop,
             **extra_args,
         )
+        torch.nn.init.zeros_(self.attn.proj.bias)
+        torch.nn.init.zeros_(self.attn.qkv.bias)
+        torch.nn.init.xavier_uniform_(self.attn.proj.weight)
+        torch.nn.init.xavier_uniform_(self.attn.qkv.weight)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = normalization(dim, norm)

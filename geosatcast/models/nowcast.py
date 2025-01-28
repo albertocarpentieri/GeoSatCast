@@ -140,7 +140,7 @@ class AFNONATCastLatent(nn.Module):
             nat_norm="none",
             afno_norm="none",
             layer_scale="none",
-            mode="sequential"
+            mode="sequential",
     ):
         super().__init__()
         self.embed_dim = embed_dim

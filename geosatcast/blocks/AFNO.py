@@ -114,16 +114,16 @@ class Mlp(nn.Module):
             self.fc1 = conv_nd(2, in_features, hidden_features, 1)
         else:
             self.fc1 = nn.Linear(in_features, hidden_features)
-            torch.nn.init.xavier_uniform_(self.fc1.weight)
-            torch.nn.init.zeros_(self.fc1.bias)
         self.act = act_layer()
         
         if channel_first:
             self.fc2 = conv_nd(2, hidden_features, out_features, 1)
         else:
             self.fc2 = nn.Linear(hidden_features, out_features)
-            torch.nn.init.xavier_uniform_(self.fc2.weight)
-            torch.nn.init.zeros_(self.fc2.bias)
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.zeros_(self.fc1.bias)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.zeros_(self.fc2.bias)
         self.drop = nn.Dropout(drop) if drop > 0 else nn.Identity()
 
 

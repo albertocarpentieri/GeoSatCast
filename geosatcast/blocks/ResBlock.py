@@ -13,6 +13,7 @@ class ResBlock3D(nn.Module):
             act='gelu', 
             norm='group', 
             upsampling_mode='nearest',
+            init="he",
             **kwargs
     ):
         super().__init__(**kwargs)
@@ -44,10 +45,15 @@ class ResBlock3D(nn.Module):
             self.conv2 = nn.Conv3d(out_channels, out_channels,
                                    kernel_size=kernel_size, padding=padding, padding_mode="reflect")
         
-        torch.nn.init.zeros_(self.conv1.bias)
-        torch.nn.init.zeros_(self.conv2.bias)
-        torch.nn.init.kaiming_normal_(self.conv1.weight, mode='fan_in', nonlinearity='relu')
-        torch.nn.init.kaiming_normal_(self.conv2.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.zeros_(self.conv2.bias)
+
+        if init == "he":
+            nn.init.kaiming_normal_(self.conv1.weight, mode='fan_in', nonlinearity='relu')
+            nn.init.kaiming_normal_(self.conv2.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
+        elif init == "xavier":
+            nn.init.xavier_uniform_(self.conv1.weight)
+            nn.init.xavier_uniform_(self.conv2.weight)  # Use 'relu' for GELU
         
         if isinstance(act, str):
             act = (act, act)

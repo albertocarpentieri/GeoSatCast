@@ -1,13 +1,13 @@
-ID: 'NATCast-512-1-v2'
-Experiment: 'NATCast-512-1-v2'
+ID: 'try'
+Experiment: 'try'
 
 seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
   input_seq_len: 3
-  num_workers: 16
-  prefetch_factor: 4
+  num_workers: 32
+  prefetch_factor: 64
   train_length: 128000
   val_length: 12800
   field_size: 256
@@ -42,20 +42,23 @@ Decoder:
   resample_factor: [1,2,2]
   init: "xavier"
 
-Model_Type: "NAT"
+Model_Type: "AFNONAT"
 
 Model:
   in_steps: 2
   embed_dim: 512
   forecast_depth: 1
-  num_blocks: 1
+  afno_num_blocks: 1
+  nat_num_blocks: 1
   mlp_ratio: 4
-  norm: 
-  layer_scale: "auto"
+  afno_norm: 
+  nat_norm:
   kernel_size: [3]
+  layer_scale: "auto"
+  mode: "sequential"
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
   resume_path: 
 
 Loss:
@@ -64,7 +67,7 @@ Loss:
 Trainer:
   opt_patience: 3
   lr: 0.001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/NATCast/'
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNONATCast/'
   max_epochs: 100
   n_steps: 1
   gradient_clip: 1
