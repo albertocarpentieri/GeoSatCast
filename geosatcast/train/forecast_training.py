@@ -88,7 +88,7 @@ def train(
     model = DDP(model, device_ids=[rank])
 
     # Initialize GradScaler for mixed precision
-    # scaler = torch.amp.GradScaler('cuda')
+    scaler = torch.amp.GradScaler('cuda')
 
     # Check if we should resume from a checkpoint
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
@@ -120,13 +120,19 @@ def train(
                 loss = compute_loss(model, batch, n_forecast_steps, device)
             
             # Backpropagation with gradient scaling
-            
-            # scaler.scale(loss).backward()
-            loss.backward()
+            scaler.scale(loss).backward()
+            if rank == 0:
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches+1)
+                    if param.requires_grad:
+                        writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches+1)
+                        
+            # loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
-            # scaler.step(optimizer)
-            optimizer.step()
-            # scaler.update()
+            scaler.step(optimizer)
+            # optimizer.step()
+            scaler.update()
 
             # Accumulate loss for averaging
             total_loss += loss.item()

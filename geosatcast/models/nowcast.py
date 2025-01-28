@@ -149,8 +149,10 @@ class AFNONATCastLatent(nn.Module):
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size for _ in range(forecast_depth)]
         
-        if layer_scale == "auto":
-            layer_scale=.5/(forecast_depth * 2)
+        if layer_scale == "auto" and mode == "sequential":
+            layer_scale = .5 / (forecast_depth * 2)
+        elif layer_scale == "auto" and mode == "parallel":
+            layer_scale = .5 / forecast_depth
         elif layer_scale == "none":
             layer_scale = None
 

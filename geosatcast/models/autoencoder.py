@@ -42,8 +42,10 @@ class Encoder(nn.Module):
             if downsampling_mode == 'resblock':
                 sequence.append(res_block_fun(in_channels, out_channels, resample='down', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm))
             elif downsampling_mode == 'stride':
-                sequence.append(conv_nd(3, in_channels, out_channels, kernel_size=resample_factor, stride=resample_factor, padding_mode="reflect"))
-
+                conv_layer = conv_nd(3, in_channels, out_channels, kernel_size=resample_factor, stride=resample_factor, padding_mode="reflect")
+                torch.nn.init.zeros_(conv_layer.bias)
+                torch.nn.init.kaiming_normal_(conv_layer.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
+                sequence.append(conv_layer)
         self.model = nn.Sequential(*sequence)
 
     def forward(self, x):
@@ -82,7 +84,11 @@ class Decoder(nn.Module):
             out_channels = int(channels[i])
 
             if upsampling_mode == 'stride':
-                sequence.append(stride_conv(in_channels, in_channels, kernel_size=resample_factor, stride=resample_factor))
+                conv_layer = stride_conv(in_channels, in_channels, kernel_size=resample_factor, stride=resample_factor)
+                torch.nn.init.zeros_(conv_layer.bias)
+                torch.nn.init.kaiming_normal_(conv_layer.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
+                sequence.append(conv_layer)
+
             elif upsampling_mode == 'resblock':
                 sequence.append(res_block_fun(in_channels, in_channels, resample='up', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm))
 

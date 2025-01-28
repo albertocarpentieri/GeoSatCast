@@ -7,7 +7,7 @@ Dataset:
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
   input_seq_len: 3
   num_workers: 16
-  prefetch_factor: 4
+  prefetch_factor: 
   train_length: 128000
   val_length: 12800
   field_size: 256
@@ -69,3 +69,4 @@ Trainer:
   max_epochs: 100
   n_steps: 1
   gradient_clip: 1
+  warmup_steps: 2000

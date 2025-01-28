@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1-clip'
-Experiment: 'AFNOCast-512-1-clip'
+ID: 'AFNOCast-1'
+Experiment: 'AFNOCast-512-1'
 
 seed: 0
 Dataset:

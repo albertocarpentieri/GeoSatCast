@@ -10,7 +10,7 @@ class ResBlock3D(nn.Module):
             resample=None,
             resample_factor=(1, 1, 1), 
             kernel_size=(1, 3, 3),
-            act='swish', 
+            act='gelu', 
             norm='group', 
             upsampling_mode='nearest',
             **kwargs
@@ -43,6 +43,11 @@ class ResBlock3D(nn.Module):
                                    kernel_size=kernel_size, padding=padding, padding_mode="reflect")
             self.conv2 = nn.Conv3d(out_channels, out_channels,
                                    kernel_size=kernel_size, padding=padding, padding_mode="reflect")
+        
+        torch.nn.init.zeros_(self.conv1.bias)
+        torch.nn.init.zeros_(self.conv2.bias)
+        torch.nn.init.kaiming_normal_(self.conv1.weight, mode='fan_in', nonlinearity='relu')
+        torch.nn.init.kaiming_normal_(self.conv2.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
         
         if isinstance(act, str):
             act = (act, act)
