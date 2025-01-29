@@ -9,7 +9,7 @@ from yaml import load, Loader
 from torch.utils.tensorboard import SummaryWriter
 
 from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
-from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, Nowcaster
+from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, DummyLatent, Nowcaster
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters, Warmup_Scheduler
 
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
@@ -100,7 +100,7 @@ def train(
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
     start_epoch = 0
     if checkpoint_path and os.path.isfile(checkpoint_path):
-        start_epoch = load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank)
+        start_epoch = load_checkpoint(model, optimizer, scheduler, scaler, checkpoint_path, logger, rank)
         if warmup_scheduler and tot_num_batches * start_epoch < warmup_scheduler.num_warmup_steps:
             warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"] -  tot_num_batches * start_epoch)
 
@@ -126,12 +126,6 @@ def train(
             
             # Backpropagation with gradient scaling
             scaler.scale(loss).backward()
-            if rank == 0:
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches+1)
-                    if param.requires_grad:
-                        writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches+1)
                         
             # loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
@@ -151,7 +145,13 @@ def train(
             if rank == 0:
                 if num_batches % 50 == 0:
                     logger.info(f"Epoch {epoch}, Step {num_batches}: Loss {loss:.6f}")
+                if num_batches % 10 == 0:
                     writer.add_scalar("Train_minibatch/Loss", loss.item(), epoch * tot_num_batches + num_batches)
+                    for name, param in model.named_parameters():
+                        if param.grad is not None:
+                            writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches)
+                        if param.requires_grad:
+                            writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches)
 
         # Average the losses across all GPUs
         total_loss = reduce_tensor(torch.tensor(total_loss, device=device), rank)
@@ -162,7 +162,7 @@ def train(
             writer.add_scalar("Train/Loss", avg_loss, epoch)
             logger.info(f"Epoch {epoch}: Avg Loss {avg_loss:.6f}")
             # Save the model at the end of each epoch
-            save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config)
+            save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config, scaler)
         
         with torch.no_grad():
             model.eval()
@@ -232,6 +232,9 @@ def main():
     elif model_type == "AFNONAT":
         latent_model = AFNONATCastLatent(**config["Model"])
         print("mode:", latent_model.mode)
+    
+    elif model_type == "Dummy":
+        latent_model = DummyLatent()
 
     model = Nowcaster(
         latent_model,

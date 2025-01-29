@@ -78,6 +78,7 @@ class NATBlock3D(nn.Module):
         )
         torch.nn.init.zeros_(self.attn.proj.bias)
         torch.nn.init.zeros_(self.attn.qkv.bias)
+        torch.nn.init.zeros_(self.attn.rpb)
         torch.nn.init.xavier_uniform_(self.attn.proj.weight)
         torch.nn.init.xavier_uniform_(self.attn.qkv.weight)
 

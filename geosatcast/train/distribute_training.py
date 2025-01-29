@@ -115,7 +115,7 @@ def setup_distributed():
     torch.cuda.set_device(device)
     return local_rank
 
-def load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank):
+def load_checkpoint(model, optimizer, scheduler, scaler, checkpoint_path, logger, rank):
     """
     Loads model, optimizer, and scheduler states from a checkpoint.
     """
@@ -126,6 +126,8 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank):
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    if "scaler_state_dict" in checkpoint:
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
     start_epoch = checkpoint["epoch"]
     
     if rank == 0:
@@ -133,19 +135,21 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank):
     
     return start_epoch
 
-def save_model(model, optimizer, scheduler, dirpath, model_id, epoch, config):
+def save_model(model, optimizer, scheduler, dirpath, model_id, epoch, config, scaler=None):
     ckpt_folder = os.path.join(dirpath, f"{model_id}")
     os.makedirs(ckpt_folder, exist_ok=True)
     model_path = os.path.join(ckpt_folder, f"{model_id}_{epoch}.pt")
-    if torch.distributed.get_rank() == 0:
-        torch.save({
+    ckpt = {
             "epoch": epoch + 1,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "config": config
-        }, model_path)
-        print(f"Model saved at {model_path}")
+        }
+    if scaler is not None:
+        ckpt["scaler_state_dict"] = scaler.state_dict()
+    torch.save(ckpt, model_path)
+    print(f"Model saved at {model_path}")
 
 def reduce_tensor(tensor, rank):
     """

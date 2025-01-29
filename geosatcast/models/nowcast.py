@@ -116,14 +116,18 @@ class AFNONAT(nn.Module):
             layer_scale=layer_scale
         )
         if self.mode == "parallel":
-            self.afno_alpha = nn.Parameter(.5 * torch.ones(embed_dim), requires_grad=True)
-            self.nat_alpha = nn.Parameter(.5 * torch.ones(embed_dim), requires_grad=True)
+            self.afno_alpha = nn.Parameter(.5 * torch.ones(embed_dim, dtype=torch.float32), requires_grad=True)
+            self.nat_alpha = nn.Parameter(.5 * torch.ones(embed_dim, dtype=torch.float32), requires_grad=True)
 
     def forward(self, x):
         if self.mode == "sequential":
             return self.nat(self.afno(x))
         elif self.mode == "parallel":
-            return self.nat_alpha * self.nat(x) + self.afno_alpha * self.afno(x)
+            nat_out = self.nat(x)
+            # In-place scaling and addition
+            nat_out.mul_(self.nat_alpha)  # In-place scaling
+            nat_out.add_(self.afno(x).mul(self.afno_alpha))  # In-place addition
+            return nat_out
         else:
             raise Exception("Mode needs to be 'sequential' or 'parallel'")
 
@@ -177,6 +181,12 @@ class AFNONATCastLatent(nn.Module):
         x = torch.utils.checkpoint.checkpoint_sequential(self.forecast, self.forecast_depth, x, use_reentrant=False)
         return x.permute(0,3,1,2).unsqueeze(2)
 
+class DummyLatent(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.forecast = nn.Identity()
+    def forward(self, x):
+        return self.forecast(x)
 
 class Nowcaster(nn.Module):
     def __init__(
