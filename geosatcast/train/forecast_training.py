@@ -90,16 +90,21 @@ def train(
     # Initialize GradScaler for mixed precision
     scaler = torch.amp.GradScaler('cuda')
 
+    tot_num_batches = len(train_loader)
+    logger.info(f"Total number of batches is: {tot_num_batches}")
+    
+    n_forecast_steps = int(config["Trainer"].pop("n_steps"))
+
+
     # Check if we should resume from a checkpoint
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
     start_epoch = 0
     if checkpoint_path and os.path.isfile(checkpoint_path):
         start_epoch = load_checkpoint(model, optimizer, scheduler, checkpoint_path, logger, rank)
+        if warmup_scheduler and tot_num_batches * start_epoch < warmup_scheduler.num_warmup_steps:
+            warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"] -  tot_num_batches * start_epoch)
 
-    tot_num_batches = len(train_loader)
-    logger.info(f"Total number of batches is: {tot_num_batches}")
     
-    n_forecast_steps = int(config["Trainer"].pop("n_steps"))
     
     for epoch in range(start_epoch, config["Trainer"]["max_epochs"]):
         seed = int((epoch + 1) ** 2) * (rank + 1)
@@ -140,6 +145,8 @@ def train(
             
             if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
                 warmup_scheduler.step()
+            else:
+                warmup_scheduler = None
                 
             if rank == 0:
                 if num_batches % 50 == 0:

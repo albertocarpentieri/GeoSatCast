@@ -56,7 +56,7 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/NATCast-512-1-v2/NATCast-512-1-v2_2.pt"
 
 Loss:
   type: "L1"

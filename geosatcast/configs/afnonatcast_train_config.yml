@@ -55,11 +55,11 @@ Model:
   nat_norm:
   kernel_size: [3]
   layer_scale: "auto"
-  mode: "sequential"
+  mode: "parallel"
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-1-par-v2/AFNONATCast-512-1-par-v2_22.pt"
 
 Loss:
   type: "L1"
