@@ -127,8 +127,8 @@ def train(
             # Backpropagation with gradient scaling
             scaler.scale(loss).backward()
                         
-            # loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
+            if config["Trainer"]["gradient_clip"] is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
             scaler.step(optimizer)
             # optimizer.step()
             scaler.update()
@@ -152,7 +152,7 @@ def train(
                             writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches)
                         if param.requires_grad:
                             writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches)
-
+        
         # Average the losses across all GPUs
         total_loss = reduce_tensor(torch.tensor(total_loss, device=device), rank)
 
@@ -179,6 +179,7 @@ def train(
         
         if rank == 0:
             writer.add_scalar(f"Train/LR", lr, epoch)
+        torch.cuda.empty_cache()
 
 def main():
     set_global_seed(1996)

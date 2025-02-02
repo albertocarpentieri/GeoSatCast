@@ -111,7 +111,7 @@ class WorkerDataset(Dataset):
         x = np.empty((self.seq_len, 11, self.field_size, self.field_size), dtype=np.float32)
         # self.files[year]["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len, :, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
         # x = np.empty((self.seq_len, 11, *self.max_shape), dtype=np.float32)
-        with h5.File(self.data_paths[year], "r") as h:
+        with h5.File(self.data_paths[year], "r", swmr=True) as h:
             h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
         # x = x[:,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         t = self.timestamps[year][t_i:t_i+self.seq_len]

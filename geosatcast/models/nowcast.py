@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from geosatcast.utils import avg_pool_nd, conv_nd
 from geosatcast.blocks.NAT import NATBlock2D
 from geosatcast.blocks.AFNO import AFNOBlock2D
+from geosatcast.blocks.ResBlock import ResBlock3D
 
 
 class AFNOCastLatent(nn.Module):
@@ -189,6 +190,34 @@ class DummyLatent(nn.Module):
         return self.forecast(x)
 
 class Nowcaster(nn.Module):
+    def __init__(
+            self,
+            latent_model,
+            encoder,
+            decoder,
+            in_steps,
+    ):
+        super().__init__()
+
+        self.latent_model = latent_model
+        self.encoder = encoder
+        self.decoder = decoder
+        self.in_steps = in_steps
+    
+    def forward(self, x, inv, n_steps=1):
+        n_steps = min((n_steps, inv.shape[2]-self.in_steps+1))
+        yhat = torch.empty((*x.shape[:2], n_steps, *x.shape[3:]), dtype=x.dtype, device=x.device)
+        for i in range(n_steps):
+            z = torch.cat((x, inv[:,:,i:i+self.in_steps]), dim=1)
+            z = self.encoder(z)
+            z = self.latent_model(z)
+            z = self.decoder(z)
+            yhat[:,:,i:i+1] = z
+            if i < n_steps-1:
+                x = torch.concat((x[:,:,-1:], z), dim=2)
+        return yhat
+
+class UNet(nn.Module):
     def __init__(
             self,
             latent_model,

@@ -17,16 +17,22 @@ class Encoder(nn.Module):
         norm=None,
         init="he",
         kernel_sizes=[(1,3,3), (1,3,3)],
-        resample_factors=[(1,2,2), (1,2,2)]):
+        resample_factors=[(1,2,2), (1,2,2)],
+        channels=None):
         
         super().__init__()
         
-        self.max_ch = max_ch
-        self.min_ch = min_ch
-        channels = np.hstack((in_dim, np.arange(1, (levels + 1)) * min_ch))
-        channels[channels > max_ch] = max_ch
-        channels[-1] = max_ch
-
+        if channels is None:
+            self.max_ch = max_ch
+            self.min_ch = min_ch
+            channels = np.hstack((in_dim, np.arange(1, (levels + 1)) * min_ch))
+            channels[channels > max_ch] = max_ch
+            channels[-1] = max_ch
+        else:
+            self.max_ch = channels[-1]
+            self.min_ch = channels[0]
+            channels = np.hstack((in_dim, np.array(channels)))
+        
         sequence = []
         res_block_fun = ResBlock3D
 
@@ -90,7 +96,10 @@ class Decoder(nn.Module):
             out_channels = int(channels[i])
 
             if upsampling_mode == 'stride':
-                conv_layer = stride_conv(in_channels, in_channels, kernel_size=resample_factor, stride=resample_factor)
+                if i in extra_resblock_levels:
+                    conv_layer = stride_conv(in_channels, in_channels, kernel_size=resample_factor, stride=resample_factor)
+                else:
+                    conv_layer = stride_conv(in_channels, out_channels, kernel_size=resample_factor, stride=resample_factor)
                 torch.nn.init.zeros_(conv_layer.bias)
                 if init == "he":
                     torch.nn.init.kaiming_normal_(conv_layer.weight, mode='fan_in', nonlinearity='relu')  # Use 'relu' for GELU
@@ -99,8 +108,10 @@ class Decoder(nn.Module):
                 sequence.append(conv_layer)
 
             elif upsampling_mode == 'resblock':
-                sequence.append(res_block_fun(in_channels, in_channels, resample='up', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm, init=init))
-
+                if i in extra_resblock_levels:
+                    sequence.append(res_block_fun(in_channels, in_channels, resample='up', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm, init=init))
+                else:
+                    sequence.append(res_block_fun(in_channels, out_channels, resample='up', kernel_size=kernel_size, resample_factor=resample_factor, norm=norm, init=init))
             if i in extra_resblock_levels:
                 sequence.append(res_block_fun(in_channels, out_channels, resample=None, kernel_size=kernel_size, norm=norm, init=init))
 

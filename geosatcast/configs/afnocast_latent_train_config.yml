@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1-clip'
-Experiment: 'AFNOCast-512-1-clip'
+ID: 'AFNOCast-512-s2-tss-ls_0-fd_1-v1'
+Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_1-v1'
 
 seed: 0
 Dataset:
@@ -31,19 +31,20 @@ Inv_Encoder:
 Encoder:
   in_dim: 11
   levels: 3
-  extra_resblock_levels: [0,1]
+  extra_resblock_levels: []
   downsampling_mode: "stride"
   norm:
-  min_ch: 128
-  max_ch: 448
-  kernel_sizes: [[1,3,3],[1,3,3],[2,1,1]]
+  min_ch: 
+  max_ch: 
+  channels: [128, 256, 512]
+  kernel_sizes: [[2,1,1],[1,3,3],[1,3,3]]
   resample_factors: [[1,2,2],[1,2,2],[2,1,1]]
 
 Decoder:
   in_dim: 512
   out_dim: 11
   levels: 2
-  extra_resblock_levels: [0,1]
+  extra_resblock_levels: []
   upsampling_mode: "stride"
   norm:
   min_ch: 128
@@ -60,7 +61,7 @@ Model:
   num_blocks: 1
   mlp_ratio: 4
   norm: 
-  layer_scale: "auto"
+  layer_scale: 0
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
