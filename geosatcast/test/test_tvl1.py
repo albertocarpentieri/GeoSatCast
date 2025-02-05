@@ -45,5 +45,6 @@ for j in range(n_forecast_steps):
     for i in range(11):
         ax[0, i].imshow(y[i,j], vmin=y[i,j].min(), vmax=y[i,j].max(), interpolation="none")
         ax[1, i].imshow(yhat[i,j], vmin=y[i,j].min(), vmax=y[i,j].max(), interpolation="none")
-
+        print(j, i, np.nanmean(np.abs(yhat[i,j]-y[i,j].numpy())))
+    print()
     fig.savefig(f"/capstor/scratch/cscs/acarpent/tvl1_forecast_example_step{j}.png", dpi=200, bbox_inches="tight")
