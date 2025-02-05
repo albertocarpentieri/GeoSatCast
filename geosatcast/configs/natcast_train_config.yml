@@ -1,5 +1,5 @@
-ID: 'NATCast-512-s2-tss-ls_0-ks_3-fd_1-v1'
-Experiment: 'NATCast-512-s2-tss-ls_0-ks_3-fd_1-v1'
+ID: 'NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1'
+Experiment: 'NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1'
 
 seed: 0
 Dataset:
@@ -53,11 +53,11 @@ Model:
   mlp_ratio: 4
   norm: 
   layer_scale: 0
-  kernel_size: [3]
+  kernel_size: 7
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/NATCast-512-s2-tss-ls_0-ks_3-fd_1-v1/NATCast-512-s2-tss-ls_0-ks_3-fd_1-v1_2.pt"
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1/NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1_25.pt"
 
 Loss:
   type: "L1"

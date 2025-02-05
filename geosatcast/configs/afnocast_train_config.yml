@@ -1,5 +1,5 @@
-ID: 'AFNOCast-512-s2-tss-ls_0-fd_1-v1'
-Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_1-v1'
+ID: 'AFNOCast-512-s2-tss-ls_0-fd_8-v1'
+Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_8-v1'
 
 seed: 0
 Dataset:
@@ -48,7 +48,7 @@ Model_Type: "AFNO"
 Model:
   in_steps: 2
   embed_dim: 512
-  forecast_depth: 1
+  forecast_depth: 8
   num_blocks: 1
   mlp_ratio: 4
   norm: 
@@ -56,7 +56,7 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-512-s2-tss-ls_0-fd_1-v1/AFNOCast-512-s2-tss-ls_0-fd_1-v1_2.pt"
+  resume_path: 
 
 Loss:
   type: "L1"
