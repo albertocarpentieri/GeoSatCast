@@ -1,5 +1,5 @@
-ID: 'AFNONATCast-512-s2-tss-ls_0-fd_8-ks_7-seq-v1'
-Experiment: 'AFNONATCast-512-s2-tss-ls_0-fd_8-ks_7-seq-v1'
+ID: 'AFNONATCast-768-s2-tss-ls_0-fd_12-ks_5-seq-v1'
+Experiment: 'AFNONATCast-768-s2-tss-ls_0-fd_12-ks_5-seq-v1'
 
 seed: 0
 Dataset:
@@ -7,13 +7,13 @@ Dataset:
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
   input_seq_len: 3
   num_workers: 16
-  prefetch_factor: 16
+  prefetch_factor: 8
   train_length: 128000
   val_length: 12800
   field_size: 256
   train_years: [2017, 2018, 2019]
   val_years: [2020]
-  batch_size: 64
+  batch_size: 32
   seed: 0
   load_full: True
 
@@ -25,20 +25,20 @@ Encoder:
   norm:
   min_ch: 
   max_ch: 
-  channels: [128, 256, 512]
+  channels: [128, 256, 768]
   kernel_sizes: [[2,1,1],[1,3,3],[1,3,3]]
   resample_factors: [[2,1,1],[1,2,2],[1,2,2]]
   init: "xavier"
 
 Decoder:
-  in_dim: 512
+  in_dim: 768
   out_dim: 11
   levels: 2
   extra_resblock_levels: []
   upsampling_mode: "stride"
   norm:
   min_ch: 128
-  max_ch: 512
+  max_ch: 768
   kernel_size: [1,3,3]
   resample_factor: [1,2,2]
   init: "xavier"
@@ -47,20 +47,20 @@ Model_Type: "AFNONAT"
 
 Model:
   in_steps: 2
-  embed_dim: 512
-  forecast_depth: 8
+  embed_dim: 768
+  forecast_depth: 12
   afno_num_blocks: 1
   nat_num_blocks: 1
   mlp_ratio: 4
   afno_norm: 
   nat_norm:
-  kernel_size: 7
+  kernel_size: 5
   layer_scale: 0
   mode: "sequential"
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-768-s2-tss-ls_0-fd_12-ks_5-seq-v1/AFNONATCast-768-s2-tss-ls_0-fd_12-ks_5-seq-v1_23.pt"
 
 Loss:
   type: "L1"

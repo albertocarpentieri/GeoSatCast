@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 def tensor_layer_norm(num_features):
-	return nn.BatchNorm2d(num_features)
+	return nn.LayerNorm(num_features)
 
 class GHU(nn.Module):
     def __init__(self, layer_name, num_features, tln=False):
@@ -22,26 +22,27 @@ class GHU(nn.Module):
         self.num_features = num_features
         self.layer_norm = tln
 
-        self.bn_z_concat = tensor_layer_norm(self.num_features*2)
-        self.bn_x_concat = tensor_layer_norm(self.num_features*2)
+        self.bn_z_concat = tensor_layer_norm(self.num_features*2) if tln else None
+        self.bn_x_concat = tensor_layer_norm(self.num_features*2) if tln else None
 
         self.z_concat_conv = nn.Conv2d(self.num_features,self.num_features*2,5,1,2)
         self.x_concat_conv = nn.Conv2d(self.num_features,self.num_features*2,5,1,2)
-
-    def init_state(self, shape):
-        return torch.zeros(shape, dtype=torch.float32)
+        nn.init.xavier_uniform_(self.z_concat_conv.weight)
+        nn.init.zeros_(self.z_concat_conv.bias)
+        nn.init.xavier_uniform_(self.x_concat_conv.weight)
+        nn.init.zeros_(self.x_concat_conv.bias)
 
 
     def forward(self,x,z):
         if z is None:
-            z = self.init_state(x.shape)
+            z = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
         z_concat = self.z_concat_conv(z)
         if self.layer_norm:
-            z_concat = self.bn_z_concat(z_concat)
+            z_concat = self.bn_z_concat(z_concat.permute(0,2,3,1)).permute(0,3,1,2)
 
         x_concat = self.x_concat_conv(x)
         if self.layer_norm:
-            x_concat = self.bn_x_concat(x_concat)
+            x_concat = self.bn_x_concat(x_concat.permute(0,2,3,1)).permute(0,3,1,2)
 
         gates = torch.add(x_concat, z_concat)
         p, u = torch.split(gates, self.num_features, 1)
@@ -78,52 +79,76 @@ class CausalLSTMCell(nn.Module):
         self.layer_norm = tln
         self._forget_bias = forget_bias
 
-        self.bn_h_cc = tensor_layer_norm(self.num_hidden_out * 4)
-        self.bn_c_cc = tensor_layer_norm(self.num_hidden_out * 3)
-        self.bn_m_cc = tensor_layer_norm(self.num_hidden_out * 3)
-        self.bn_x_cc = tensor_layer_norm(self.num_hidden_out * 7)
-        self.bn_c2m = tensor_layer_norm(self.num_hidden_out * 4)
-        self.bn_o_m = tensor_layer_norm(self.num_hidden_out)
+        self.bn_h_cc = tensor_layer_norm(self.num_hidden_out * 4) if tln else None
+        self.bn_c_cc = tensor_layer_norm(self.num_hidden_out * 3) if tln else None
+        self.bn_m_cc = tensor_layer_norm(self.num_hidden_out * 3) if tln else None
+        self.bn_x_cc = tensor_layer_norm(self.num_hidden_out * 7) if tln else None
+        self.bn_c2m = tensor_layer_norm(self.num_hidden_out * 4) if tln else None
+        self.bn_o_m = tensor_layer_norm(self.num_hidden_out) if tln else None
 
         self.h_cc_conv = nn.Conv2d(self.num_hidden_out,self.num_hidden_out*4,5,1,2)
+        nn.init.xavier_uniform_(self.h_cc_conv.weight)
+        nn.init.zeros_(self.h_cc_conv.bias)
+        
         self.c_cc_conv = nn.Conv2d(self.num_hidden_out,self.num_hidden_out*3,5,1,2)
+        nn.init.xavier_uniform_(self.c_cc_conv.weight)
+        nn.init.zeros_(self.c_cc_conv.bias)
+        
         self.m_cc_conv = nn.Conv2d(self.num_hidden_in,self.num_hidden_out*3,5,1,2)
+        nn.init.xavier_uniform_(self.m_cc_conv.weight)
+        nn.init.zeros_(self.m_cc_conv.bias)
+        
         self.x_cc_conv = nn.Conv2d(self.x_ch,self.num_hidden_out*7,5,1,2)
+        nn.init.xavier_uniform_(self.x_cc_conv.weight)
+        nn.init.zeros_(self.x_cc_conv.bias)
+        
         self.c2m_conv  = nn.Conv2d(self.num_hidden_out,self.num_hidden_out*4,5,1,2)
+        nn.init.xavier_uniform_(self.c2m_conv.weight)
+        nn.init.zeros_(self.c2m_conv.bias)
+        
         self.o_m_conv = nn.Conv2d(self.num_hidden_out,self.num_hidden_out,5,1,2)
+        nn.init.xavier_uniform_(self.o_m_conv.weight)
+        nn.init.zeros_(self.o_m_conv.bias)
+        
         self.o_conv = nn.Conv2d(self.num_hidden_out, self.num_hidden_out, 5, 1, 2)
+        nn.init.xavier_uniform_(self.o_conv.weight)
+        nn.init.zeros_(self.o_conv.bias)
+        
         self.cell_conv = nn.Conv2d(self.num_hidden_out*2,self.num_hidden_out,1,1,0)
-
+        nn.init.xavier_uniform_(self.cell_conv.weight)
+        nn.init.zeros_(self.cell_conv.bias)
+        
 
     def forward(self,x,h,c,m):
         if h is None:
-            h = torch.zeros((x.shape[0], self.num_hidden_out, x.shape[2], x.shape[3]), dtype=torch.float32)
+            h = torch.zeros((x.shape[0], self.num_hidden_out, x.shape[2], x.shape[3]), dtype=x.dtype, device=x.device)
         if c is None:
-            c = torch.zeros((x.shape[0], self.num_hidden_out, x.shape[2], x.shape[3]), dtype=torch.float32)
+            c = torch.zeros((x.shape[0], self.num_hidden_out, x.shape[2], x.shape[3]), dtype=x.dtype, device=x.device)
         if m is None:
-            m = torch.zeros((x.shape[0], self.num_hidden_in, x.shape[2], x.shape[3]), dtype=torch.float32)
+            m = torch.zeros((x.shape[0], self.num_hidden_in, x.shape[2], x.shape[3]), dtype=x.dtype, device=x.device)
         
         h_cc = self.h_cc_conv(h)
         c_cc = self.c_cc_conv(c)
         m_cc = self.m_cc_conv(m)
         
         if self.layer_norm:
-            h_cc = self.bn_h_cc(h_cc)
-            c_cc = self.bn_c_cc(c_cc)
-            m_cc = self.bn_m_cc(m_cc)
+            h_cc = self.bn_h_cc(h_cc.permute(0,2,3,1)).permute(0,3,1,2)
+            c_cc = self.bn_c_cc(c_cc.permute(0,2,3,1)).permute(0,3,1,2)
+            m_cc = self.bn_m_cc(m_cc.permute(0,2,3,1)).permute(0,3,1,2)
 
 
         i_h, g_h, f_h, o_h = torch.split(h_cc, self.num_hidden_out, 1)
-        i_c, g_c, f_c = torch.split(c_cc,self.num_hidden_out, 1)
-        i_m, f_m, m_m = torch.split(m_cc,self.num_hidden_out, 1)
+        i_c, g_c, f_c = torch.split(c_cc, self.num_hidden_out, 1)
+        i_m, f_m, m_m = torch.split(m_cc, self.num_hidden_out, 1)
+        
         if x is None:
-            i = torch.sigmoid(i_h+i_c)
+            i = torch.sigmoid(i_h + i_c)
             f = torch.sigmoid(f_h + f_c + self._forget_bias)
             g = torch.tanh(g_h + g_c)
         else:
             x_cc = self.x_cc_conv(x)
             if self.layer_norm:
-                x_cc = self.bn_x_cc(x_cc)
+                x_cc = self.bn_x_cc(x_cc.permute(0,2,3,1)).permute(0,3,1,2)
 
             i_x, g_x, f_x, o_x, i_x_, g_x_, f_x_ = torch.split(x_cc,self.num_hidden_out, 1)
             i = torch.sigmoid(i_x + i_h+ i_c)
@@ -132,7 +157,7 @@ class CausalLSTMCell(nn.Module):
         c_new = f * c + i * g
         c2m = self.c2m_conv(c_new)
         if self.layer_norm:
-            c2m = self.bn_c2m(c2m)
+            c2m = self.bn_c2m(c2m.permute(0,2,3,1)).permute(0,3,1,2)
 
         i_c, g_c, f_c, o_c = torch.split(c2m,self.num_hidden_out, 1)
 
@@ -146,11 +171,11 @@ class CausalLSTMCell(nn.Module):
             gg = torch.tanh(g_c + g_x_)
         m_new = ff * torch.tanh(m_m) + ii * gg
         o_m = self.o_m_conv(m_new)
+
         if self.layer_norm:
-             o_m = self.bn_o_m(o_m)
+             o_m = self.bn_o_m(o_m.permute(0,2,3,1)).permute(0,3,1,2)
         if x is None:
             o = torch.tanh(o_c + o_m)
-
         else:
             o = torch.tanh(o_x + o_c + o_m)
         o = self.o_conv(o)
@@ -160,11 +185,11 @@ class CausalLSTMCell(nn.Module):
         return h_new, c_new, m_new
 
 
-class RNN(nn.Module):
-    def __init__(self, input_length, in_ch, out_ch, num_hidden, tln=True):
-        super(RNN, self).__init__()
+class PredRNN(nn.Module):
+    def __init__(self, in_steps, in_ch, out_ch, num_hidden, tln=True):
+        super(PredRNN, self).__init__()
         
-        self.input_length = input_length
+        self.in_steps = in_steps
         self.num_hidden = num_hidden
         self.num_layers = len(self.num_hidden)
         cell_list = []
@@ -183,16 +208,19 @@ class RNN(nn.Module):
                 num_hidden[i],
                 1.0, 
                 tln=tln))
-        
         self.cell_list = nn.ModuleList(cell_list)
-        self.conv_last = nn.Conv2d(self.num_hidden[-1], out_ch, 1, 1, 0)
+        
         ghu_list.append(GHU('highway', self.num_hidden[0], tln=tln))
         self.ghu_list = nn.ModuleList(ghu_list)
+
+        self.conv_last = nn.Conv2d(self.num_hidden[-1], out_ch, 1, 1, 0)
+        nn.init.xavier_uniform_(self.conv_last.weight)
+        nn.init.zeros_(self.conv_last.bias)
 
 
     def forward(self, images, num_steps):
         # [batch, length, channel, width, height]
-        total_length = num_steps + self.input_length
+        total_length = num_steps + self.in_steps
         batch = images.shape[0]
         height = images.shape[3]
         width = images.shape[4]
@@ -208,7 +236,7 @@ class RNN(nn.Module):
             c_t.append(None)
 
         for t in range(total_length):
-            if t < self.input_length:
+            if t < self.in_steps:
                 net = images[:,:,t]
             else:
                 net = x_gen
@@ -221,19 +249,19 @@ class RNN(nn.Module):
                 h_t[i], c_t[i], m_t = self.cell_list[i](h_t[i - 1], h_t[i], c_t[i], m_t)
 
             x_gen = self.conv_last(h_t[self.num_layers-1])
-            if t >= self.input_length:
+            if t >= self.in_steps:
                 next_images.append(x_gen)
 
         # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
         next_images = torch.stack(next_images, dim=1)
-        out  =  next_images
+        out = next_images
         next_images = []
 
         return out
 
 if __name__ == "__main__":
     x = torch.randn(1,11,2,256,256)
-    predrnn = RNN(2, 11, 11, [128,64,64,64],  True)
+    predrnn = PredRNN(2, 11, 11, [128,64,64,64],  True)
     print(predrnn)
     predict = predrnn(x, num_steps=1)
     print(predict.shape)

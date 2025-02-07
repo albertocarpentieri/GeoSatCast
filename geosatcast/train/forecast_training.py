@@ -71,7 +71,8 @@ def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
         return loss
 
 def train(
-    rank, 
+    rank,
+    local_rank, 
     config, 
     model,
     train_loader, 
@@ -83,9 +84,9 @@ def train(
     logger,
     writer):
 
-    device = f"cuda:{rank}"
+    device = f"cuda:{local_rank}"
     model.to(device)
-    model = DDP(model, device_ids=[rank])
+    model = DDP(model, device_ids=[local_rank])
 
     # Initialize GradScaler for mixed precision
     scaler = torch.amp.GradScaler('cuda')
@@ -187,14 +188,14 @@ def main():
     with open(CONFIG_PATH, "r") as f:
         config = load(f, Loader)
 
-    local_rank = setup_distributed()
+    rank, local_rank = setup_distributed()
     
     log_dir = config["Trainer"]["log_dir"]
-    logger = setup_logger(log_dir, local_rank, experiment_name=config["Experiment"])
+    logger = setup_logger(log_dir, rank, experiment_name=config["Experiment"])
     
     # TensorBoard writer (only for rank 0)
     writer = None
-    if local_rank == 0:
+    if rank == 0:
         tensor_log_dir = os.path.join(log_dir, config["Experiment"])
         writer = SummaryWriter(log_dir=tensor_log_dir)
         logger.info(f"TensorBoard logs will be saved to {tensor_log_dir}")
@@ -243,7 +244,7 @@ def main():
         decoder,
         in_steps=in_steps
     )
-    if local_rank == 0:
+    if rank == 0:
         print(model)
         print(count_parameters(encoder))
         print(count_parameters(decoder))
@@ -257,7 +258,8 @@ def main():
         warmup_scheduler = None
     
     train(
-        local_rank, 
+        rank, 
+        local_rank,
         config, 
         model,
         train_dataloader, 

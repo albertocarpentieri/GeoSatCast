@@ -34,8 +34,16 @@ def warp_image(frame, flow):
     flow_map = flow_map.astype(np.float32) + flow
     
     # Warp the image
-    warped_frame = cv2.remap(frame, flow_map, None, cv2.INTER_CUBIC, 
-                                borderMode=cv2.BORDER_TRANSPARENT, borderValue=255)
+    warped_frame = cv2.remap(
+        frame, 
+        flow_map, 
+        None, 
+        cv2.INTER_CUBIC, 
+        borderMode=cv2.BORDER_CONSTANT, 
+        borderValue=255)
+    #                             borderMode=cv2.BORDER_TRANSPARENT, borderValue=255)
+    
+    
     return warped_frame
 
 def forecast_future_frame(model, frames, num_future_frames):
@@ -45,7 +53,7 @@ def forecast_future_frame(model, frames, num_future_frames):
     forecasted_frames = []
     
     # Compute optical flow between last two frames
-    flow = compute_optical_flow(model, frames[-2], frames[-1])
+    flow = compute_optical_flow(model, frames[-1], frames[-2])
     
     # Predict future frames
     last_frame = frames[-1]
@@ -71,7 +79,7 @@ def _forecast_single_channel(x, conf, n_steps, j):
     model.setOuterIterations(conf['outer_iterations'])
     model.setScaleStep(conf['scale_step'])
     model.setGamma(conf['gamma'])
-    model.setWarpingsNumber(conf['warps'])  # ✅ Correct function name
+    model.setWarpingsNumber(conf['warps'])  
     model.setEpsilon(conf['epsilon'])
     model.setUseInitialFlow(False)
 
@@ -79,10 +87,9 @@ def _forecast_single_channel(x, conf, n_steps, j):
     prev_frames = x[j, :, :, :, None]  # Keep as NumPy array
     min_ = prev_frames.min()
     max_ = prev_frames.max()
-    print(j, min_, max_)
     # Normalize frames to [0, 254] and convert to uint8
     prev_frames = ((prev_frames - min_) / (max_ - min_)) * 254
-    prev_frames = np.clip(prev_frames, 0, 254).astype(np.uint8)  # ✅ Fix precision issues
+    prev_frames = np.clip(prev_frames, 0, 254).astype(np.uint8)  
 
     # Predict future frames
     future_frames_ = forecast_future_frame(model, prev_frames, n_steps)
@@ -91,7 +98,6 @@ def _forecast_single_channel(x, conf, n_steps, j):
     future_frames_ = future_frames_.astype(np.float32)
     
     future_frames_[future_frames_ == 255] = np.nan
-    print(future_frames_.min(), future_frames_.max(), np.isnan(future_frames_).sum())
 
     future_frames_ = (future_frames_ / 254) * (max_ - min_) + min_
 
@@ -120,7 +126,7 @@ if __name__ == "__main__":
         'tau': 0.15,
         'epsilon': 0.005,
         'gamma': 0,
-        'warps': 10,  # ✅ Fixed incorrect `warps` handling
+        'warps': 10, 
         'lambda': 0.05,
         'outer_iterations': 20,
         'inner_iterations': 20,

@@ -64,6 +64,7 @@ def get_dataloader(
     ):
 
     # Get the current GPU and process information
+    rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device(f"cuda:{local_rank}")
 
@@ -78,15 +79,15 @@ def get_dataloader(
         field_size,
         length,
         validation,
-        local_rank+1,
+        rank+1,
         load_full
         )
     if seed == "rank":
-        seed = local_rank
+        seed = rank
     sampler = WorkerDistributedSampler(
         dataset, 
         num_replicas=torch.distributed.get_world_size(),
-        rank=local_rank,
+        rank=rank,
         shuffle=not validation,
         seed=seed) # set to zero if you want all processes to go in the same time indices
 
@@ -103,17 +104,18 @@ def get_dataloader(
 
 def setup_distributed():
     dist.init_process_group(backend="nccl")
+    rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     
-    # Validate local_rank
+    # Validate rank
     num_gpus = torch.cuda.device_count()
     if local_rank >= num_gpus:
-        raise RuntimeError(f"Invalid local_rank {local_rank}. Only {num_gpus} GPUs available.")
+        raise RuntimeError(f"Invalid rank {rank}. Only {num_gpus} GPUs available.")
     
     device = f"cuda:{local_rank}"
     print(f"Setting device to {device}")
     torch.cuda.set_device(device)
-    return local_rank
+    return rank, local_rank
 
 def load_checkpoint(model, optimizer, scheduler, scaler, checkpoint_path, logger, rank):
     """
@@ -223,7 +225,7 @@ def load_latent_nowcaster(ckpt_path, return_config=False):
         return model, config
     return model
 
-def load_latent_nowcaster(ckpt_path, return_config=False, in_steps=2):
+def load_nowcaster(ckpt_path, return_config=False, in_steps=2):
     """
     Loads model, optimizer, and scheduler states from a checkpoint.
     """
