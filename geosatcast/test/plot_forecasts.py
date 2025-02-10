@@ -4,7 +4,7 @@ import torch
 
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
-from geosatcast.train.distribute_training import load_nowcaster
+from geosatcast.train.distribute_training import load_nowcaster, load_predrnn
 from geosatcast.data.distributed_dataset import DistributedDataset
 from geosatcast.models.tvl1 import tvl1_forecast
 import datetime
@@ -12,6 +12,8 @@ import datetime
 def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
 afnonatcast = load_nowcaster("/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_8-ks_7-seq-v1/AFNONATCast-512-s2-tss-ls_0-fd_8-ks_7-seq-v1_59.pt").to("cuda")
 print(count_parameters(afnonatcast))
+predrnn = load_predrnn("/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/predrnn-v3/predrnn-v3_0.pt").to("cuda")
+
 
 in_steps = 2
 n_forecast_steps = 8
@@ -64,18 +66,24 @@ for t_i in [48, 12450, 850, 24000, 656]:
     inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
     with torch.no_grad():
         yhat = afnonatcast(x, inv, n_forecast_steps)
+        yhat_rnn = predrnn(x, n_forecast_steps)
+    
     yhat = yhat.detach().cpu().numpy()[0] * stds + means
+    yhat_rnn = yhat_rnn.detach().cpu().numpy()[0] * stds + means
     print(yhat.shape)
 
     y = y.numpy() * stds + means
     print(y.shape)
     for j in range(n_forecast_steps):
-        fig, ax = plt.subplots(5, 11, figsize=(25, 12), sharex=True, sharey=True, constrained_layout=True)
+        fig, ax = plt.subplots(7, 11, figsize=(25, 16), sharex=True, sharey=True, constrained_layout=True)
         for i in range(11):
             ax[0, i].imshow(y[i,j], vmin=y[i,j].min(), vmax=y[i,j].max(), interpolation="none")
             ax[1, i].imshow(yhat[i,j], vmin=yhat[i,j].min(), vmax=y[i,j].max(), interpolation="none")
             ax[2, i].imshow(yhat_of[i,j], vmin=yhat[i,j].min(), vmax=y[i,j].max(), interpolation="none")
-            ax[3, i].imshow(yhat[i,j] - y[i,j], vmin=-stds[i]/4, vmax=stds[i]/4, cmap="bwr", interpolation="none")
-            ax[4, i].imshow(yhat_of[i,j] - y[i,j], vmin=-stds[i]/4, vmax=stds[i]/4, cmap="bwr", interpolation="none")
+            ax[3, i].imshow(yhat_rnn[i,j], vmin=yhat[i,j].min(), vmax=y[i,j].max(), interpolation="none")
+            
+            ax[4, i].imshow(yhat[i,j] - y[i,j], vmin=-stds[i], vmax=stds[i], cmap="bwr", interpolation="none")
+            ax[5, i].imshow(yhat_of[i,j] - y[i,j], vmin=-stds[i], vmax=stds[i], cmap="bwr", interpolation="none")
+            ax[6, i].imshow(yhat_rnn[i,j] - y[i,j], vmin=-stds[i], vmax=stds[i], cmap="bwr", interpolation="none")
 
-        fig.savefig(f"/capstor/scratch/cscs/acarpent/images/forecast_{t[j]}_{j}.png", dpi=200, bbox_inches="tight")
+        fig.savefig(f"/capstor/scratch/cscs/acarpent/images/forecast_{t[j]}_{j}.png", dpi=100, bbox_inches="tight")

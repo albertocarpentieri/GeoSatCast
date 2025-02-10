@@ -201,17 +201,12 @@ class AFNOBlock2D(nn.Module):
             x = self.mlp(x)
             x = x + residual
             return x
+        
         residual = x
-        x = self.norm1(x)
-        x = self.filter(x)
+        x = self.filter(self.norm1(x))
         if self.afno_res_mult > 1:
             residual = F.interpolate(residual, x.shape[2:])
-        if self.double_skip:
-            x = self.gamma1 * x + residual
-            residual = x
-
-        x = self.norm2(x)
-        x = self.mlp(x)
-        x = self.gamma2 * x + residual
+        x = self.gamma1 * x + residual
+        x = self.gamma2 * x + self.mlp(self.norm2(x))
         return x
         

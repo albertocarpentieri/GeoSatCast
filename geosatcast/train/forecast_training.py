@@ -14,38 +14,60 @@ from distribute_training import set_global_seed, setup_logger, get_dataloader, s
 
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
     model.eval()
-    total_loss = 0
-    total_loss_per_ch = torch.zeros((11,))
+    
+    total_mae = 0
+    total_mae_per_ch = torch.zeros((11,))
+    
+    total_mse = 0
+    total_mse_per_ch = torch.zeros((11,))
+
     num_batches = 0
     with torch.no_grad():
         for batch in val_loader:
-            loss, loss_per_ch = compute_loss(model, batch, n_forecast_steps, device, per_ch=True)
-            total_loss += loss.item()
-            total_loss_per_ch += loss_per_ch.cpu()
+            mae, mse, mae_per_ch, mse_per_ch = compute_loss(model, batch, n_forecast_steps, device, per_ch=True)
+            total_mae += mae.item()
+            total_mae_per_ch += mae_per_ch.cpu()
+
+            total_mse += mse.item()
+            total_mse_per_ch += mse_per_ch.cpu()
             num_batches += 1
 
     # Average the losses across all GPUs
-    total_loss = reduce_tensor(torch.tensor(total_loss, device=device), device)
-    total_loss_per_ch = reduce_tensor(total_loss_per_ch.to(device), device)
+    total_mae = reduce_tensor(torch.tensor(total_mae, device=device), device)
+    total_mae_per_ch = reduce_tensor(total_mae_per_ch.to(device), device)
+    total_mse = reduce_tensor(torch.tensor(total_mse, device=device), device)
+    total_mse_per_ch = reduce_tensor(total_mse_per_ch.to(device), device)
 
-    avg_loss = total_loss / num_batches
-    avg_loss_per_ch = total_loss_per_ch / num_batches
+    avg_mae = total_mae / num_batches
+    avg_mae_per_ch = total_mae_per_ch / num_batches
+
+    avg_mse = total_mse / num_batches
+    avg_mse_per_ch = total_mse_per_ch / num_batches
     
     if dist.get_rank() == 0:
-        loss_str = ", ".join([f"{avg_loss_per_ch[i].item():.6f}" for i in range(11)])
-        logger.info(f"Validation: Avg Loss {avg_loss:.6f}, Loss per ch {loss_str}")
+        loss_str = ", ".join([f"{avg_mae_per_ch[i].item():.6f}" for i in range(11)])
+        logger.info(f"Validation: Avg MAE {avg_mae:.6f}, MAE per ch {loss_str}")
+        loss_str = ", ".join([f"{avg_mse_per_ch[i].item():.6f}" for i in range(11)])
+        logger.info(f"Validation: Avg MSE {avg_mse:.6f}, MSE per ch {loss_str}")
 
         # Log validation losses to TensorBoard
-        writer.add_scalar("Val/Loss", avg_loss, epoch)
+        writer.add_scalar("Val/MAE", avg_mae, epoch)
+        writer.add_scalar("Val/MSE", avg_mse, epoch)
         for c in range(11):
-            writer.add_scalar(f"Val/Loss_{c}", avg_loss_per_ch[c].item(), epoch)
+            writer.add_scalar(f"Val/MAE_{c}", avg_mae_per_ch[c].item(), epoch)
+            writer.add_scalar(f"Val/MSE_{c}", avg_mse_per_ch[c].item(), epoch)
+    
+    if config["Loss"]["Monitor"] == "L1":
+        avg_loss = avg_mae
+    elif config["Loss"]["Monitor"] == "L2":
+        avg_loss = avg_mse
     return avg_loss
 
 def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
     in_steps = model.module.in_steps
     
     # open batch
-    x, _, inv, sza = batch
+    x, t, inv, sza = batch
     sza = sza[:, :, :in_steps+n_forecast_steps-1]
     x, y = x[:,:,:in_steps], x[:,:,in_steps:in_steps+n_forecast_steps]
     if per_ch:
@@ -62,13 +84,32 @@ def compute_loss(model, batch, n_forecast_steps, device, per_ch=False):
    
     yhat = model(x, inv, n_steps=n_forecast_steps)
     res = (y - yhat).abs()
-    loss = res.mean()
+    mae = res.mean()
+    mse = (res**2).mean()
     
+    # if mae >= 1:
+    #     import datetime
+    #     print("loss:", res.mean(dim=(1,2,3,4)))
+    #     print("ground_truth:", y.mean(dim=(1,2,3,4)), y.std(dim=(1,2,3,4)))
+    #     print(yhat.mean(dim=(1,2,3,4)), yhat.std(dim=(1,2,3,4)))
+    #     with torch.no_grad():
+    #         for i in range(n_forecast_steps):
+    #             z = torch.cat((x, inv[:,:,:in_steps]), dim=1)
+    #             print("concatenated:", z.mean(dim=(1,2,3,4)), z.std(dim=(1,2,3,4)))
+    #             z = model.module.encoder(z)
+    #             print("compressed:", z.mean(dim=(1,2,3,4)), z.std(dim=(1,2,3,4)))
+    #             z = model.module.latent_model(z)
+    #             print("latent_forecasted:", z.mean(dim=(1,2,3,4)), z.std(dim=(1,2,3,4)))
+    #             z = model.module.decoder(z)
+    #             print("decoded:", z.mean(dim=(1,2,3,4)), z.std(dim=(1,2,3,4)))
+    #     print("time:", [t_b[0] for t_b in t])
+    #     return None
     if per_ch:
-        loss_per_ch = res.detach().mean(dim=(0,2,3,4))
-        return loss, loss_per_ch
+        mae_per_ch = res.detach().mean(dim=(0,2,3,4))
+        mse_per_ch = (res.detach()**2).mean(dim=(0,2,3,4))
+        return mae, mse, mae_per_ch, mse_per_ch
     else:
-        return loss
+        return mae, mse
 
 def train(
     rank,
@@ -115,53 +156,72 @@ def train(
         train_sampler.set_epoch(epoch)
         model.train()
         
-        total_loss = 0.0
-        total_loss_per_ch = torch.zeros((11,))
+        total_mae = 0.0
+        total_mse = 0.0
         num_batches = 0
         
         for batch in train_loader:
             optimizer.zero_grad()
             # Mixed precision forward and loss computation
-            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                loss = compute_loss(model, batch, n_forecast_steps, device)
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                losses = compute_loss(model, batch, n_forecast_steps, device)
             
-            # Backpropagation with gradient scaling
-            scaler.scale(loss).backward()
+            if losses is not None:
+                mae, mse = losses
+                # Backpropagation with gradient scaling
+                if config["Loss"]["Backprop"] == "L1":
+                    scaler.scale(mae).backward()
+                elif config["Loss"]["Backprop"] == "L2":
+                    scaler.scale(mse).backward()
                         
-            if config["Trainer"]["gradient_clip"] is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=True)
-            scaler.step(optimizer)
-            # optimizer.step()
-            scaler.update()
-
-            # Accumulate loss for averaging
-            total_loss += loss.item()
-            num_batches += 1
-            
-            if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
-                warmup_scheduler.step()
-            else:
-                warmup_scheduler = None
+                if config["Trainer"]["gradient_clip"] is not None:
+                    scaler.unscale_(optimizer)  # Unscale the gradients before clipping
+                    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=False)
                 
-            if rank == 0:
-                if num_batches % 50 == 0:
-                    logger.info(f"Epoch {epoch}, Step {num_batches}: Loss {loss:.6f}")
-                if num_batches % 10 == 0:
-                    writer.add_scalar("Train_minibatch/Loss", loss.item(), epoch * tot_num_batches + num_batches)
+                if torch.isfinite(total_norm):
+                    scaler.step(optimizer)
+                else:
                     for name, param in model.named_parameters():
                         if param.grad is not None:
-                            writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches)
-                        if param.requires_grad:
-                            writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches)
+                            if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                                logger.warning(f"Gradient issue in {name}: contains NaN or Inf.")
+                
+                # optimizer.step()
+                scaler.update()
+
+                # Accumulate loss for averaging
+                total_mae += mae.item()
+                total_mse += mse.item()
+                num_batches += 1
+                
+                if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
+                    warmup_scheduler.step()
+                else:
+                    warmup_scheduler = None
+                    
+                if rank == 0:
+                    if num_batches % 50 == 0:
+                        logger.info(f"Epoch {epoch}, Step {num_batches}: MAE {mae.item():.6f} MSE {mse.item():.6f}")
+                    if num_batches % 10 == 0:
+                        writer.add_scalar("Train_minibatch/MAE", mae.item(), epoch * tot_num_batches + num_batches)
+                        writer.add_scalar("Train_minibatch/MSE", mse.item(), epoch * tot_num_batches + num_batches)
+                        for name, param in model.named_parameters():
+                            if param.grad is not None:
+                                writer.add_histogram(f'Gradients/{name}', param.grad, epoch * tot_num_batches + num_batches)
+                            if param.requires_grad:
+                                writer.add_histogram(f'Weights/{name}', param, epoch * tot_num_batches + num_batches)
         
         # Average the losses across all GPUs
-        total_loss = reduce_tensor(torch.tensor(total_loss, device=device), rank)
+        total_mae = reduce_tensor(torch.tensor(total_mae, device=device), rank)
+        total_mse = reduce_tensor(torch.tensor(total_mse, device=device), rank)
 
         if rank == 0:
-            avg_loss = total_loss / num_batches
+            avg_mae = total_mae / num_batches
+            avg_mse = total_mse / num_batches
             # Log to TensorBoard
-            writer.add_scalar("Train/Loss", avg_loss, epoch)
-            logger.info(f"Epoch {epoch}: Avg Loss {avg_loss:.6f}")
+            writer.add_scalar("Train/MAE", avg_mae, epoch)
+            writer.add_scalar("Train/MSE", avg_mse, epoch)
+            logger.info(f"Epoch {epoch}: Avg MAE {avg_mae:.6f}, Avg MSE {avg_mse:.6f}")
             # Save the model at the end of each epoch
             save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config, scaler)
         

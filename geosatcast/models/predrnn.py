@@ -253,7 +253,7 @@ class PredRNN(nn.Module):
                 next_images.append(x_gen)
 
         # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
-        next_images = torch.stack(next_images, dim=1)
+        next_images = torch.stack(next_images, dim=2)
         out = next_images
         next_images = []
 

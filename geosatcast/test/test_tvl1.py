@@ -58,13 +58,16 @@ def test():
     n_samples = 500
     indices = np.random.choice(np.arange(len(dataset.indices)), n_samples, replace=False) 
     
-    rmse_map = np.zeros((11,n_forecast_steps,512,512))
-    nan_map = np.zeros((11,n_forecast_steps,512,512))
-
     tvl1_metric_dict = {}
     
     stds = dataset.stds.numpy().reshape(-1,1,1,1)
     means = dataset.means.numpy().reshape(-1,1,1,1)
+    
+    thresholds = np.array([0.2, 0.3, 0.25, 0.4, 0.35, 0.3, 0.2, 0.15, 0.25, 0.5, 0.45])
+    
+    aggregated_rmse = np.zeros((11, n_forecast_steps, 512, 512))
+    aggregated_mae = np.zeros((11, n_forecast_steps, 512, 512))
+    aggregated_me = np.zeros((11, n_forecast_steps, 512, 512))
     
     for i in indices:
         year, t_i = dataset.indices[i]
@@ -93,52 +96,59 @@ def test():
         y = y.numpy() * stds + means
         yhat = yhat * stds + means
 
-        # Mask channels 0, 7, 8 where sza > 90 degrees
-        mask = sza > np.cos(np.deg2rad(90))
-        y[[0, 7, 8], :, :, :][mask] = np.nan
-        yhat[[0, 7, 8], :, :, :][mask] = np.nan
-
-        square_res = (yhat-y)**2
-        abs_res = np.abs(yhat-y)
-        res = yhat - y
-        
-        nans = np.isnan(yhat)
-        rmse_map += square_res
-        nan_map += nans.astype(int)
-        rmse = np.sqrt(np.nanmean(square_res, axis=(1,2,3)))
-        mae = np.nanmean(abs_res, axis=(1,2,3))
-        mean_error = np.nanmean(res, axis=(1,2,3))
-        
-        csi_low = critical_success_index(y, yhat, threshold=0.2)
-        csi_high = critical_success_index(y, yhat, threshold=0.8)
-        fss_low = fraction_skill_score(y, yhat, scale=3)
-        fss_high = fraction_skill_score(y, yhat, scale=10)
-        
-        pearson_corr = []
-        for c in range(11):
-            if np.isnan(y[c]).all() or np.isnan(yhat[c]).all():
-                pearson_corr.append(np.nan)
-            else:
-                pearson_corr.append(pearsonr(y[c].flatten(), yhat[c].flatten())[0])
-        
         metric_dict_ = {
             "time": t[in_steps:],
             "loc": [224, 224],
-            "rmse": rmse,
-            "mae": mae,
-            "mean_error": mean_error,
-            "csi_low": csi_low,
-            "csi_high": csi_high,
-            "fss_low": fss_low,
-            "fss_high": fss_high,
-            "pearson_corr": pearson_corr
+            "rmse": [],
+            "mae": [],
+            "mean_error": [],
+            "csi_low": [],
+            "csi_high": [],
+            "fss_low": [],
+            "fss_high": [],
+            "pearson_corr": []
         }
+        
+        for j in range(n_forecast_steps):
+            rmse_map = np.sqrt((yhat[:, j] - y[:, j])**2)
+            mae_map = np.abs(yhat[:, j] - y[:, j])
+            me_map = yhat[:, j] - y[:, j]
+            
+            aggregated_rmse[:, j] += rmse_map
+            aggregated_mae[:, j] += mae_map
+            aggregated_me[:, j] += me_map
+            
+            rmse = np.nanmean(rmse_map, axis=(1, 2))
+            mae = np.nanmean(mae_map, axis=(1, 2))
+            mean_error = np.nanmean(me_map, axis=(1, 2))
+            csi_low = [critical_success_index(y[c, j], yhat[c, j], thresholds[c]) for c in range(11)]
+            csi_high = [critical_success_index(y[c, j], yhat[c, j], thresholds[c] * 1.5) for c in range(11)]
+            fss_low = [fraction_skill_score(y[c, j], yhat[c, j], scale=3) for c in range(11)]
+            fss_high = [fraction_skill_score(y[c, j], yhat[c, j], scale=10) for c in range(11)]
+            pearson_corr = [pearsonr(y[c, j].flatten(), yhat[c, j].flatten())[0] if np.isfinite(y[c, j]).all() and np.isfinite(yhat[c, j]).all() else np.nan for c in range(11)]
+            
+            metric_dict_["rmse"].append(rmse)
+            metric_dict_["mae"].append(mae)
+            metric_dict_["mean_error"].append(mean_error)
+            metric_dict_["csi_low"].append(csi_low)
+            metric_dict_["csi_high"].append(csi_high)
+            metric_dict_["fss_low"].append(fss_low)
+            metric_dict_["fss_high"].append(fss_high)
+            metric_dict_["pearson_corr"].append(pearson_corr)
         
         tvl1_metric_dict[datetime.datetime.utcfromtimestamp(t[in_steps])] = metric_dict_
 
+    aggregated_rmse /= n_samples
+    aggregated_mae /= n_samples
+    aggregated_me /= n_samples
+    
+    np.save("/capstor/scratch/cscs/acarpent/tvl1_results/aggregated_rmse.npy", aggregated_rmse)
+    np.save("/capstor/scratch/cscs/acarpent/tvl1_results/aggregated_mae.npy", aggregated_mae)
+    np.save("/capstor/scratch/cscs/acarpent/tvl1_results/aggregated_me.npy", aggregated_me)
+    
     with open("/capstor/scratch/cscs/acarpent/tvl1_results/results_validation.pkl", "wb") as o:
         pkl.dump(tvl1_metric_dict, o)
-    print("saved")
+    print("Aggregated maps and metrics saved")
 
 if __name__ == "__main__":
     test()

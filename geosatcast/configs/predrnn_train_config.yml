@@ -1,5 +1,5 @@
-ID: 'predrnn-v3'
-Experiment: 'predrnn-v3'
+ID: 'predrnn-s2-fd_4-nh_64-v1'
+Experiment: 'predrnn-s2-fd_4-nh_64-v1'
 
 seed: 0
 Dataset:
@@ -21,12 +21,12 @@ Model:
   in_steps: 2
   in_ch: 11 
   out_ch: 11
-  num_hidden: [128,128,128]
-  tln: False
+  num_hidden: [64,64,64,64]
+  tln: True
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/predrnn-s2-fd_4-nh_64-v1/predrnn-s2-fd_4-nh_64-v1_74.pt"
 
 Loss:
   type: "L1"

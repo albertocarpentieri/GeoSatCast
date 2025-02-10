@@ -127,7 +127,6 @@ class NATBlock2D(nn.Module):
         qk_scale=None,
         drop=0.0,
         attn_drop=0.0,
-        drop_path=0.0,
         act="gelu",
         norm=None,
         layer_scale=None,
@@ -155,7 +154,6 @@ class NATBlock2D(nn.Module):
         torch.nn.init.xavier_uniform_(self.attn.proj.weight)
         torch.nn.init.xavier_uniform_(self.attn.qkv.weight)
 
-        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = normalization(dim, norm)
         self.mlp = Mlp(
             in_features=dim,
@@ -176,16 +174,14 @@ class NATBlock2D(nn.Module):
     def forward(self, x):
         if not self.layer_scale:
             shortcut = x
-            x = self.norm1(x)
-            x = self.attn(x)
-            x = shortcut + self.drop_path(x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            x = self.attn(self.norm1(x))
+            x = shortcut + x
+            x = x + self.mlp(self.norm2(x))
             return x
         shortcut = x
-        x = self.norm1(x)
-        x = self.attn(x)
-        x = shortcut + self.drop_path(self.gamma1 * x)
-        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
+        x = self.attn(self.norm1(x))
+        x = shortcut + self.gamma1 * x
+        x = x + self.gamma2 * self.mlp(self.norm2(x))
         return x
 
 

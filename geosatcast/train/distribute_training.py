@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
+from geosatcast.models.predrnn import PredRNN
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LambdaLR
 import logging
@@ -79,11 +80,12 @@ def get_dataloader(
         field_size,
         length,
         validation,
-        rank+1,
+        local_rank+1,
         load_full
         )
     if seed == "rank":
         seed = rank
+    
     sampler = WorkerDistributedSampler(
         dataset, 
         num_replicas=torch.distributed.get_world_size(),
@@ -258,6 +260,31 @@ def load_nowcaster(ckpt_path, return_config=False, in_steps=2):
     if return_config:
         return model, config
     return model
+
+def load_predrnn(ckpt_path, return_config=False):
+    """
+    Loads model, optimizer, and scheduler states from a checkpoint.
+    """
+    
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    config = ckpt["config"]
+
+    model = PredRNN(
+        **config["Model"]
+    )
+    state_dict = {
+        k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
+    }
+    model.load_state_dict(state_dict)
+    if return_config:
+        return model, config
+    return model
+
+
+
+
+
+
 
 class WarmupLambdaLR(LambdaLR):
     def __init__(self, optimizer, num_warmup_steps, lr_lambda):
