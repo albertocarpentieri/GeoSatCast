@@ -51,7 +51,8 @@ class DistributedDataset(Dataset):
         length=10000,
         validation=False,
         load_full=False,
-        rank=1
+        rank=1,
+        mask_sza=True
         ):
         
         self.data_path = data_path
@@ -61,6 +62,7 @@ class DistributedDataset(Dataset):
         self.seq_len = self.input_len + self.output_len
         self.channels = channels
         self.field_size = field_size
+        self.mask_sza = mask_sza
         self.means = torch.from_numpy(np.array(MEANS)[:,None,None,None]).type(torch.float32)
         self.stds = torch.from_numpy(np.array(STDS)[:,None,None,None]).type(torch.float32)
         
@@ -140,7 +142,8 @@ class DistributedDataset(Dataset):
         x = torch.from_numpy(x).type(torch.float32)
         
         x = x.permute(1, 0, 2, 3).contiguous()
-        x[[0,7,8]] = x[[0,7,8]] * (sza > 0)
+        if self.mask_sza:
+            x[[0,7,8]] = x[[0,7,8]] * (sza > - 0.07)
         x = (x - self.means) / self.stds
         
         return x, t, inv, sza
@@ -200,9 +203,10 @@ class WorkerDistributedSampler(Sampler):
         # Compute the number of samples each process should handle
         self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
         self.q = self.rank // 4
-        print(f"Defining sampler for replica {self.rank}")
+        print(f"Defining sampler for replica {self.rank} of {self.num_replicas}")
         if self.rank == 0:
             print("Total Dataset Size:", self.total_size)
+            print("Num samples:", self.num_samples)
 
     def __iter__(self):
         # Deterministic shuffling based on seed and epoch
@@ -214,8 +218,8 @@ class WorkerDistributedSampler(Sampler):
             g.manual_seed(0)
 
         iter_indices = torch.randperm(self.total_size, generator=g)[self.q*self.num_samples : (self.q+1) * self.num_samples].tolist()
-        if self.rank%4==0:
-            print(self.rank, iter_indices[0], iter_indices[1])
+        if self.rank % 4 == 0:
+            print(self.rank, iter_indices[0], iter_indices[-1])
         return iter(iter_indices)
 
     def __len__(self):

@@ -144,7 +144,6 @@ class AFNOBlock2D(nn.Module):
             drop=0.,
             act_layer=nn.GELU,
             norm='layer',
-            double_skip=True,
             num_blocks=8,
             sparsity_threshold=0.01,
             hard_thresholding_fraction=1.0,
@@ -175,7 +174,6 @@ class AFNOBlock2D(nn.Module):
             drop=drop,
             channel_first=channel_first
         )
-        self.double_skip = double_skip
         self.layer_scale = False
         if layer_scale is not None and type(layer_scale) in [int, float]:
             self.layer_scale = True
@@ -207,6 +205,7 @@ class AFNOBlock2D(nn.Module):
         if self.afno_res_mult > 1:
             residual = F.interpolate(residual, x.shape[2:])
         x = self.gamma1 * x + residual
-        x = self.gamma2 * x + self.mlp(self.norm2(x))
+        # residual = x        
+        x = self.gamma2 * self.mlp(self.norm2(x)) + x
         return x
         

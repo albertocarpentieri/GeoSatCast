@@ -60,7 +60,7 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
-  resume_path: 
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_12-ks_5-seq-v2/AFNONATCast-1024-s2-tss-ls_0-fd_12-ks_5-seq-v2_10.pt"
 
 Loss:
   Backprop: "L2"
@@ -68,9 +68,9 @@ Loss:
 
 Trainer:
   opt_patience: 3
-  lr: 0.001
+  lr: 0.0001
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNONATCast/'
   max_epochs: 100
   n_steps: 1
   gradient_clip: 1
-  warmup_steps: 4000
+  warmup_steps: 2000

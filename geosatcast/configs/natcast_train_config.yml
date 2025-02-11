@@ -1,5 +1,5 @@
-ID: 'NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1'
-Experiment: 'NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1'
+ID: 'NATCast-512-s2-tss-ls_0-ks_5-fd_1-v2'
+Experiment: 'NATCast-512-s2-tss-ls_0-ks_5-fd_1-v2'
 
 seed: 0
 Dataset:
@@ -53,14 +53,15 @@ Model:
   mlp_ratio: 4
   norm: 
   layer_scale: 0
-  kernel_size: 7
+  kernel_size: 5
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1/NATCast-512-s2-tss-ls_0-ks_7-fd_1-v1_25.pt"
+  resume_path: 
 
 Loss:
-  type: "L1"
+  Backprop: "L2"
+  Monitor: "L2"
 
 Trainer:
   opt_patience: 3
@@ -68,5 +69,5 @@ Trainer:
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/NATCast/'
   max_epochs: 100
   n_steps: 1
-  gradient_clip:
+  gradient_clip: 1
   warmup_steps: 2000
