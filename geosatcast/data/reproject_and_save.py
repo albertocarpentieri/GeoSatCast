@@ -12,17 +12,26 @@ import pandas as pd
 import h5py
 import dask
 import dask.array as da
-# dask.config.set(num_workers=256)
-# dask.config.set({"array.chunk-size": "64MiB"})
+
+import multiprocessing
+nthreads = multiprocessing.cpu_count()  # Typically 288 in your node
+dask.config.set(num_workers=nthreads)
+
 dask.config.set({"scheduler": "threads"})
 NON_HRV_BANDS = [
     "IR_016", "IR_039", "IR_087", "IR_097", "IR_108", "IR_120", 
     "IR_134", "VIS006", "VIS008", "WV_062", "WV_073"
 ]
 
-YEAR = 2017
+MIN_VALUES = [
+    0, 150, 150, 150, 150, 150,
+    150, 0, 0, 150, 150, -1
+]
+
+YEAR = 2021
 N_DAYS = 1
 MIN_FILE_SIZE = 258 * 1024 * 1024 # 250 MB
+DTYPE = np.float32
 
 # Function to extract time from filename
 def get_time_from_filename(f):
@@ -32,54 +41,11 @@ def get_time_from_filename(f):
     ])
     return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
 
-# # Function to read and process data
-# @dask.delayed
-# def read_data(filenames):
-#     target_proj = Proj(proj='latlong', datum='WGS84')
-
-#     # Define the area once
-#     area_def = pr.create_area_def(
-#         "custom_latlon", target_proj.srs, 
-#         area_extent=[-16.125, 18.125, 36.125, 62.125],
-#         resolution=(0.05, 0.05)
-#     )
-
-#     # Enable Dask
-#     with satpy.config.set(
-#         cache_dir='/workspace/cache', 
-#         tmp_dir='/workspace/tmp',
-#         data_dir='/workspace/data',
-#         use_dask=True
-#     ):
-#         scn = MultiScene.from_files(filenames, reader="seviri_l1b_native")
-
-#         # Load data in parallel
-#         scn.load(NON_HRV_BANDS, use_dask=True)
-
-#         # Faster resampling with bilinear interpolation
-#         reprojected_scn = scn.resample(
-#             area_def, resampler='bilinear', cache_dir='/workspace/proj_tmp/'
-#         )
-
-#         # Blend and convert to Xarray dataset
-#         blended = reprojected_scn.blend(blend_function=timeseries)
-#         ds = blended.to_xarray_dataset().drop_vars('crs').drop_attrs()
-
-#         # Extract coordinates
-#         lat, lon = ds["y"].values, ds["x"].values
-#         time_vals = ds["time"].values
-
-#         # Optimize memory
-#         vars_data = [ds[var].values.astype(np.float16) for var in NON_HRV_BANDS]
-#         combined_array = np.stack(vars_data, axis=-1)
-
-#     return combined_array, time_vals, lat, lon
-
-# @dask.delayed
 def process_file(filenames):
     target_proj = Proj(proj='latlong', datum='WGS84')
     area_def = pr.create_area_def(
-        "custom_latlon", target_proj.srs, 
+        "custom_latlon", 
+        target_proj.srs, 
         area_extent=[-16.125, 18.125, 36.125, 62.125],
         resolution=(0.05, 0.05)
     )
@@ -90,39 +56,44 @@ def process_file(filenames):
         use_dask=True
     ):
         scn = MultiScene.from_files(filenames, reader="seviri_l1b_native")
-        scn.load(NON_HRV_BANDS, use_dask=True)
+        # scn.load(NON_HRV_BANDS, use_dask=True)
+        scn.load(NON_HRV_BANDS)
         print("loaded")
         reprojected_scn = scn.resample(
             area_def, resampler='nearest', cache_dir='/capstor/scratch/cscs/acarpent/proj_tmp/'
         )
         print("resampled")
         # reprojected_scn.load(NON_HRV_BANDS, use_dask=True)
-        reprojected_scn = reprojected_scn.blend(blend_function="composite")
+        reprojected_scn = reprojected_scn.blend(blend_function=timeseries)
         print("blended")
         ds = reprojected_scn.to_xarray_dataset().drop_vars('crs').drop_attrs()
         print("xarreyed")
         lat, lon = ds["y"].values, ds["x"].values
         time_vals = ds["time"].values
-        vars_data = [ds[var].values.astype(np.float16) for var in NON_HRV_BANDS]
+        vars_data = [ds[var].values.astype(DTYPE) for var in NON_HRV_BANDS]
         combined_array = np.stack(vars_data, axis=-1)
     return combined_array, time_vals, lat, lon
 
 # Function to read and process multiple files
 def read_data(filenames):
-    # # tasks = [process_file(fn) for fn in filenames]
-    # results = np.concatenate(dask.compute(*tasks), axis=0)
-    # print(results.shape)
-    # # Combine results as needed
     results = process_file(filenames)
-    print(results.shape)
     return results
-# # Run in parallel
-# filenames = [...]  # Your list of filenames
-# data_array, timestamps, lat, lon = dask.compute(read_data(filenames))
+
+def get_last_processed_index(csv_path):
+    if not os.path.exists(csv_path):
+        return 0
+    df = pd.read_csv(csv_path, delimiter=';', header=None)
+    if df.empty:
+        return 0
+    return len(df)
+
+def save_progress(csv_path, day_start, day_end, avg, nan, shape):
+    with open(csv_path, "a") as f:
+        f.write(f"{day_start}-{day_end};{avg};{nan};{shape}\n")
 
 if __name__ == "__main__":
     DATA_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI_DATA/HRSEVIRI{YEAR}/"
-    DF_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI_16B/"
+    DF_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI_16B/{YEAR}.csv"
     SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI_16B/{YEAR}_weekly_datasets/"
     os.makedirs(SAVE_PATH, exist_ok=True)
     
@@ -132,8 +103,9 @@ if __name__ == "__main__":
     filenames = [os.path.join(DATA_PATH, f) for f in sorted(os.listdir(DATA_PATH)) if ".nat" in f]
     time_array = [get_time_from_filename(f) for f in filenames]
     
-    i = 0
+    i = get_last_processed_index(DF_PATH)
     while start_date + timedelta(days=N_DAYS * i) < end_date:
+        start_time = time.time()
         day_start = start_date + timedelta(days=N_DAYS * i)
         day_end = start_date + timedelta(days=N_DAYS * (i + 1))
         print(day_start, day_end)
@@ -143,14 +115,14 @@ if __name__ == "__main__":
         
         if weekly_filenames:
             weekly_time_array = [get_time_from_filename(f) for f in weekly_filenames]
-            data_array, timestamps, lat, lon = read_data(filenames)
-            
+            data_array, timestamps, lat, lon = read_data(weekly_filenames)
+            print(data_array.shape, lat.shape, lon.shape)
             latlon_grid = np.stack(np.meshgrid(lon, lat, indexing='xy'))
             sza = np.stack([cos_zenith_angle_from_timestamp(
                     t_.timestamp(),
                     lon=latlon_grid[0].flatten(),
                     lat=latlon_grid[1].flatten())
-                for t_ in weekly_time_array], axis=0).reshape(len(weekly_time_array), lat.shape[0], lat.shape[1], 1)
+                for t_ in weekly_time_array], axis=0).reshape(len(weekly_time_array), lat.shape[0], lon.shape[0], 1)
             data_array = np.concatenate((data_array, sza), axis=-1)
             
             corrected = False
@@ -190,26 +162,26 @@ if __name__ == "__main__":
                     corrected = True
             
             if corrected:
-                cond = (np.isnan(data_array)) | (data_array < np.array(MIN_VALUES)[None,:,None,None])
+                cond = (np.isnan(data_array)) | (data_array < np.array(MIN_VALUES)[None,None,None,:])
                 cond_sum = np.sum(cond, axis=(1,2,3))
-                idx = np.where(cond_sum==0)[0]
-                
+                idx = np.where(cond_sum==0)
+                print(idx, cond_sum)
                 
                 data_array = data_array[idx]
                 print("new corrected data shape:", data_array.shape)
                 timestamps = timestamps[idx]
-                print("Saving new_"+h5_file)
+                
 
 
                 save_path = os.path.join(SAVE_PATH, f"{YEAR}_{N_DAYS * i}-{N_DAYS * (i + 1)}.h5")
-                os.system(f"lfs setstripe -c 4 -S 32M {save_path}")  # Apply Lustre striping
+                # os.system(f"lfs setstripe -c 4 -S 32M {save_path}")  # Apply Lustre striping
             
                 with h5py.File(save_path, "w") as new_hf:
-                    new_hf.create_dataset("latitude", data=lat.astype(np.float32))
-                    new_hf.create_dataset("longitude", data=lon.astype(np.float32))
-                    new_hf.create_dataset("time", data=[t_.timestamp() for t_ in weekly_time_array])
-                    new_hf.create_dataset("channels", data=NON_HRV_BANDS + ["SZA"])
-                    fields = new_hf.create_dataset("fields", data=data_array.astype(np.float16))
+                    lat_dataset = new_hf.create_dataset("latitude", data=lat.astype(np.float32))
+                    lon_dataset = new_hf.create_dataset("longitude", data=lon.astype(np.float32))
+                    time_dataset = new_hf.create_dataset("time", data=[t_.timestamp() for t_ in weekly_time_array])
+                    channel_dataset = new_hf.create_dataset("channels", data=NON_HRV_BANDS + ["SZA"])
+                    fields = new_hf.create_dataset("fields", data=data_array.astype(DTYPE))
                     
                     fields.dims[0].attach_scale(time_dataset)
                     fields.dims[1].attach_scale(lat_dataset)
@@ -220,8 +192,7 @@ if __name__ == "__main__":
             nan = np.sum(np.isnan(data_array))
             shape = data_array.shape
             
-            with open(os.path.join(DF_PATH, f"{YEAR}.csv"), "a") as f:
-                f.write(f"{day_start}-{day_end};{avg};{nan};{shape}\n")
+            save_progress(DF_PATH, day_start, day_end, avg, nan, shape)
 
             print(f"Saved data chunk {i+1} containing data of shape {data_array.shape} in {time.time() - start_time} seconds") 
             print("###############################################################################################################################")

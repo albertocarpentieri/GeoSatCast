@@ -20,7 +20,7 @@ MEANS = [
     7.317643165588379,
     9.009994506835938,
     235.41212463378906,
-    252.4060516357422
+    252.4060516357422,
 ]
 
 STDS = [
@@ -52,7 +52,8 @@ class DistributedDataset(Dataset):
         validation=False,
         load_full=False,
         rank=1,
-        mask_sza=True
+        mask_sza=True,
+        dtype=32,
         ):
         
         self.data_path = data_path
@@ -63,8 +64,14 @@ class DistributedDataset(Dataset):
         self.channels = channels
         self.field_size = field_size
         self.mask_sza = mask_sza
-        self.means = torch.from_numpy(np.array(MEANS)[:,None,None,None]).type(torch.float32)
-        self.stds = torch.from_numpy(np.array(STDS)[:,None,None,None]).type(torch.float32)
+        if dtype == 16:
+            self.torch_dtype = torch.float16
+            self.numpy_dtype = np.float16
+        else:
+            self.torch_dtype = torch.float32
+            self.numpy_dtype = np.float32
+        self.means = torch.from_numpy(np.array(MEANS)[:,None,None,None]).type(self.torch_dtype)
+        self.stds = torch.from_numpy(np.array(STDS)[:,None,None,None]).type(self.torch_dtype)
         
         dem = xr.open_dataset(os.path.join(invariants_path, "dem.nc"))["DEM"].values
         dem[np.isnan(dem)] = -1
@@ -72,7 +79,7 @@ class DistributedDataset(Dataset):
 
         lwmask = xr.open_dataset(os.path.join(invariants_path, "lwmask.nc"))["LWMASK"].values
         lwmask[lwmask==3] = 0
-        self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(torch.float32)
+        self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(self.torch_dtype)
         self.data_paths = {year: os.path.join(self.data_path, f"{year}_{name}.h5") for year in years}
         
         self.data_len = {}
@@ -90,16 +97,16 @@ class DistributedDataset(Dataset):
 
     def get_latlon(self):
         with h5.File(self.data_paths[self.years[0]], "r") as h:
-            self.max_shape = h["fields"].shape[-2:]
+            self.max_shape = h["fields"].shape[1:3]
             self.lon = h["longitude"][:]
             self.lat = h["latitude"][:]
-        self.latlon_grid = np.stack(np.meshgrid(self.lon, self.lat))
+        # self.latlon_grid = np.stack(np.meshgrid(self.lon, self.lat))
     
     def generate_global_indices(self):
         # Precompute all valid (year, t_i, lat_i, lon_i) combinations
         indices = []
         for year in self.years:
-            timestamps = self.timestamps[year]
+            timestamps = self.timestamps[year][:-100]
             diff = timestamps[self.seq_len:] - timestamps[:-self.seq_len]
             idx = np.where(diff == 15*60*(self.seq_len))[0]
             for i in idx:
@@ -119,42 +126,38 @@ class DistributedDataset(Dataset):
     
     def get_data(self, year, t_i, lat_i, lon_i):
         if not self.load_full:
-            x = np.empty((self.seq_len, 11, self.field_size, self.field_size), dtype=np.float32)
+            # x = np.empty((self.seq_len, 11, self.field_size, self.field_size), dtype=np.float32)
+            x = np.empty((self.seq_len, self.field_size, self.field_size, 12), dtype=self.numpy_dtype)
             with h5.File(self.data_paths[year], "r") as h:
-                h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size], np.s_[:])
+                h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size, :], np.s_[:])
         else:
-            x = np.empty((self.seq_len, 11, *self.max_shape), dtype=np.float32)
+            x = np.empty((self.seq_len, *self.max_shape, 12), dtype=self.numpy_dtype)
             with h5.File(self.data_paths[year], "r") as h:
                 h["fields"].read_direct(x, np.s_[t_i:t_i+self.seq_len,:], np.s_[:])
-            x = x[:,:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
+            x = x[:,lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
         t = self.timestamps[year][t_i:t_i+self.seq_len]
 
         inv = self.inv[:, None, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
-        sza = torch.from_numpy(np.stack([cos_zenith_angle_from_timestamp(
-                t_, 
-                self.latlon_grid[0, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten(),
-                self.latlon_grid[1, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten())
-                for t_ in t])).type(torch.float32)
-        sza = sza.view(1,-1,self.field_size, self.field_size)
+        # sza = torch.from_numpy(np.stack([cos_zenith_angle_from_timestamp(
+        #         t_, 
+        #         self.latlon_grid[0, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten(),
+        #         self.latlon_grid[1, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten())
+        #         for t_ in t])).type(torch.float32)
+        # sza = sza.view(1,-1,self.field_size, self.field_size)
         t = torch.from_numpy(t).type(torch.float32)[None, ..., None, None]
-        x = torch.from_numpy(x).type(torch.float32)
+        x = torch.from_numpy(x).type(self.torch_dtype)
         
-        x = x.permute(1, 0, 2, 3).contiguous()
+        x = x.permute(3, 0, 1, 2).contiguous()
+        x, sza = x[:-1], x[-1:]
         if self.mask_sza:
             x[[0,7,8]] = x[[0,7,8]] * (sza > - 0.07)
         x = (x - self.means) / self.stds
-        
         return x, t, inv, sza
     
     def __getitem__(self, idx):
-        if self.worker_indices is not None:
-            i = int(idx % self.len_worker_indices)
-            year, t_i = self.worker_indices[i]
-        else:
-            i = int(idx % self.len_indices)
-            year, t_i = self.indices[i]
+        year, t_i = self.indices[idx]
         
         if self.validation:
             sampler = np.random.default_rng(int(idx * self.rank)).integers
@@ -162,8 +165,10 @@ class DistributedDataset(Dataset):
             sampler = np.random.randint
         lat_i = sampler(0, self.max_shape[-2] - self.field_size)
         lon_i = sampler(0, self.max_shape[-1] - self.field_size)        
-        x, t, inv, sza = self.get_data(year, t_i, lat_i, lon_i)
-        return x, t, inv, sza
+        try:
+            return self.get_data(year, t_i, lat_i, lon_i)
+        except:
+            raise Exception(f"{idx} relative to {t_i} of year {year} has problems")
 
 
 class WorkerDistributedSampler(Sampler):
@@ -179,7 +184,16 @@ class WorkerDistributedSampler(Sampler):
         drop_last: If True, drops the last incomplete batch if the dataset size
                    is not divisible by the number of replicas.
     """
-    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, seed=0, drop_last=False):
+    def __init__(
+        self, 
+        dataset, 
+        num_replicas=None, 
+        rank=None, 
+        shuffle=True, 
+        seed=0, 
+        drop_last=False,
+        num_samples=None):
+
         if num_replicas is None:
             if not torch.distributed.is_available():
                 raise RuntimeError("Distributed package not available.")
@@ -190,7 +204,7 @@ class WorkerDistributedSampler(Sampler):
                 raise RuntimeError("Distributed package not available.")
             rank = torch.distributed.get_rank()
         
-        self.dataset = dataset
+        self.len_dataset = len(dataset)
         self.num_replicas = num_replicas
         self.rank = rank
         self.shuffle = shuffle
@@ -201,7 +215,15 @@ class WorkerDistributedSampler(Sampler):
         self.total_size = len(self.indices)
         
         # Compute the number of samples each process should handle
-        self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
+
+        if num_samples is None:
+            self.num_samples = math.floor(self.total_size / self.num_replicas)
+        else:
+            self.num_samples = num_samples 
+        
+        if self.num_samples > self.total_size / (self.num_replicas / 4):
+            self.num_samples = math.floor(self.total_size / (self.num_replicas / 4))
+
         self.q = self.rank // 4
         print(f"Defining sampler for replica {self.rank} of {self.num_replicas}")
         if self.rank == 0:
@@ -217,9 +239,10 @@ class WorkerDistributedSampler(Sampler):
             g = torch.Generator()
             g.manual_seed(0)
 
-        iter_indices = torch.randperm(self.total_size, generator=g)[self.q*self.num_samples : (self.q+1) * self.num_samples].tolist()
-        if self.rank % 4 == 0:
-            print(self.rank, iter_indices[0], iter_indices[-1])
+        iter_indices = torch.randperm(self.total_size, generator=g)[self.q  * self.num_samples : (self.q + 1)  * self.num_samples].tolist() # all processes get the same indices
+        # iter_indices = torch.randperm(self.total_size, generator=g)[self.rank * self.num_samples : (self.rank+1) * self.num_samples].tolist()
+        # if self.rank % 4 == 0:
+        print(self.rank, iter_indices[0], iter_indices[-1])
         return iter(iter_indices)
 
     def __len__(self):

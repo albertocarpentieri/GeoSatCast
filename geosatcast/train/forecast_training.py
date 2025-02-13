@@ -12,6 +12,8 @@ from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import NATCastLatent, AFNONATCastLatent, AFNOCastLatent, DummyLatent, Nowcaster
 from distribute_training import set_global_seed, setup_logger, get_dataloader, setup_distributed, load_checkpoint, save_model, load_vae, reduce_tensor, count_parameters, Warmup_Scheduler
 
+import time
+
 def validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch):
     model.eval()
     
@@ -160,7 +162,11 @@ def train(
         total_mse = 0.0
         num_batches = 0
         
+        start_time = time.time()
         for batch in train_loader:
+            print(time.time() - start_time)
+            start_time = time.time()
+
             optimizer.zero_grad()
             # Mixed precision forward and loss computation
             with torch.amp.autocast('cuda', dtype=torch.float32):
@@ -227,7 +233,8 @@ def train(
         
         with torch.no_grad():
             model.eval()
-            val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
         
         
         if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:

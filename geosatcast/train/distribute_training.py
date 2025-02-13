@@ -56,12 +56,15 @@ def get_dataloader(
     validation,
     years,
     length,
+    data_name="16b_virtual",
     field_size=128,
     num_workers=24,
     batch_size=8,
     prefetch_factor=8,
     seed=0,
-    load_full=True
+    load_full=False,
+    mask_sza=True,
+    dtype=16
     ):
 
     # Get the current GPU and process information
@@ -72,22 +75,26 @@ def get_dataloader(
     dataset = DistributedDataset(
         data_path,
         invariants_path,
-        "new_virtual",
-        years,
-        input_seq_len,
-        None,
-        np.arange(11),
-        field_size,
-        length,
-        validation,
-        local_rank+1,
-        load_full
+        name=data_name,
+        years=years,
+        input_len=input_seq_len,
+        output_len=None,
+        channels=np.arange(11),
+        field_size=field_size,
+        length=length,
+        validation=validation,
+        load_full=load_full,
+        rank=local_rank+1,
+        mask_sza=mask_sza,
+        dtype=dtype,
         )
+    
     if seed == "rank":
         seed = rank
     
     sampler = WorkerDistributedSampler(
         dataset, 
+        num_samples=length,
         num_replicas=torch.distributed.get_world_size(),
         rank=rank,
         shuffle=not validation,
