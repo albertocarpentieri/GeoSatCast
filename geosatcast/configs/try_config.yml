@@ -5,10 +5,10 @@ seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
-  input_seq_len: 16
+  input_seq_len: 3
   num_workers: 16
-  prefetch_factor: 8
-  train_length: 12800 # number of data samples per node
+  prefetch_factor: 16
+  train_length: 32000 # number of data samples per node
   val_length: 1280 # number of data samples per node
   field_size: 256
   train_years: [2017, 2018, 2019]
@@ -43,23 +43,13 @@ Decoder:
   resample_factor: [1,2,2]
   init: "xavier"
 
-Model_Type: "AFNONAT"
+Model_Type: "Dummy"
 
 Model:
   in_steps: 2
-  embed_dim: 512
-  forecast_depth: 1
-  afno_num_blocks: 1
-  nat_num_blocks: 1
-  mlp_ratio: 4
-  afno_norm: 
-  nat_norm:
-  kernel_size: [3]
-  layer_scale: "auto"
-  mode: "sequential"
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/Dummy/"
   resume_path: 
 
 Loss:
@@ -69,7 +59,7 @@ Loss:
 Trainer:
   opt_patience: 3
   lr: 0.001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNONATCast/'
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/Dummy/'
   max_epochs: 100
   n_steps: 1
   gradient_clip: 1

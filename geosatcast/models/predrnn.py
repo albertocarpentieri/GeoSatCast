@@ -218,9 +218,9 @@ class PredRNN(nn.Module):
         nn.init.zeros_(self.conv_last.bias)
 
 
-    def forward(self, images, num_steps):
+    def forward(self, images, n_steps):
         # [batch, length, channel, width, height]
-        total_length = num_steps + self.in_steps
+        total_length = n_steps + self.in_steps
         batch = images.shape[0]
         height = images.shape[3]
         width = images.shape[4]

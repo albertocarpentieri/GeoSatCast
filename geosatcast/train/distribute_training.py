@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import torch.distributed as dist
 import numpy as np
 from torch.utils.data import DataLoader
@@ -8,9 +9,15 @@ from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
 from geosatcast.models.predrnn import PredRNN
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import (
+    ReduceLROnPlateau,
+    CosineAnnealingLR,
+    LambdaLR
+)
 import logging
 import random
+from typing import Optional, Tuple, Any
+
 
 def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -126,41 +133,96 @@ def setup_distributed():
     torch.cuda.set_device(device)
     return rank, local_rank
 
-def load_checkpoint(model, optimizer, scheduler, scaler, checkpoint_path, logger, rank):
+def load_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    warmup_scheduler: Optional[LambdaLR],
+    cosine_scheduler: Optional[CosineAnnealingLR],
+    scheduler: Optional[ReduceLROnPlateau],
+    scaler: Optional[torch.cuda.amp.GradScaler],
+    checkpoint_path: str,
+    logger: Any,
+    rank: int
+) -> int:
     """
-    Loads model, optimizer, and scheduler states from a checkpoint.
+    Loads model, optimizer, scaler, and multiple scheduler states from a checkpoint.
+    Returns the epoch from which to resume (already 1-indexed in the checkpoint).
     """
     if rank == 0:
         logger.info(f"Loading checkpoint from {checkpoint_path}...")
-    
+
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+    # 1) Load model state
     model.load_state_dict(checkpoint["model_state_dict"])
+
+    # 2) Load optimizer state
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-    if "scaler_state_dict" in checkpoint:
+
+    # 3) Load each scheduler state if present
+    if "warmup_scheduler_state_dict" in checkpoint and warmup_scheduler is not None:
+        warmup_scheduler.load_state_dict(checkpoint["warmup_scheduler_state_dict"])
+
+    if "cosine_scheduler_state_dict" in checkpoint and cosine_scheduler is not None:
+        cosine_scheduler.load_state_dict(checkpoint["cosine_scheduler_state_dict"])
+
+    if "scheduler_state_dict" in checkpoint and scheduler is not None:
+        scheduler.load_state_dict(checkpoint["reduce_scheduler_state_dict"])
+
+    # 4) Load scaler state if present
+    if "scaler_state_dict" in checkpoint and scaler is not None:
         scaler.load_state_dict(checkpoint["scaler_state_dict"])
-    start_epoch = checkpoint["epoch"]
-    
+
+    start_epoch = checkpoint["epoch"]  # This is epoch+1 from saving
+
     if rank == 0:
         logger.info(f"Resumed training from epoch {start_epoch}.")
-    
+
     return start_epoch
 
-def save_model(model, optimizer, scheduler, dirpath, model_id, epoch, config, scaler=None):
+def save_model(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    warmup_scheduler: Optional[LambdaLR],
+    cosine_scheduler: Optional[CosineAnnealingLR],
+    scheduler: Optional[ReduceLROnPlateau],
+    dirpath: str,
+    model_id: str,
+    epoch: int,
+    config: dict,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None
+):
+    """
+    Saves model, optimizer, multiple schedulers, scaler, and config to a checkpoint.
+    """
     ckpt_folder = os.path.join(dirpath, f"{model_id}")
     os.makedirs(ckpt_folder, exist_ok=True)
     model_path = os.path.join(ckpt_folder, f"{model_id}_{epoch}.pt")
+
     ckpt = {
-            "epoch": epoch + 1,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "config": config
-        }
+        "epoch": epoch + 1,  # so that when loaded, we resume at correct epoch
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "config": config
+    }
+
+    # Save each scheduler's state if it exists
+    if warmup_scheduler is not None:
+        ckpt["warmup_scheduler_state_dict"] = warmup_scheduler.state_dict()
+
+    if cosine_scheduler is not None:
+        ckpt["cosine_scheduler_state_dict"] = cosine_scheduler.state_dict()
+
+    if scheduler is not None:
+        ckpt["scheduler_state_dict"] = scheduler.state_dict()
+
+    # Save the scaler state if present
     if scaler is not None:
         ckpt["scaler_state_dict"] = scaler.state_dict()
+
     torch.save(ckpt, model_path)
     print(f"Model saved at {model_path}")
+
 
 def reduce_tensor(tensor, rank):
     """
@@ -286,12 +348,6 @@ def load_predrnn(ckpt_path, return_config=False):
     if return_config:
         return model, config
     return model
-
-
-
-
-
-
 
 class WarmupLambdaLR(LambdaLR):
     def __init__(self, optimizer, num_warmup_steps, lr_lambda):

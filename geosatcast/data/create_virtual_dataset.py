@@ -25,13 +25,13 @@ def get_datasets_info(file_paths, dataset_name):
     return dtype, tuple(shape)
 
 def create_virtual_dataset(save_path, virtual_file_path):
-    h5_files = [os.path.join(save_path, f) for f in sorted(os.listdir(save_path)) if f.endswith('.h5') and os.path.getsize(os.path.join(save_path, f)) > 1*1024*1024]
+    h5_files = [os.path.join(save_path, f) for f in sorted(os.listdir(save_path)) if f.endswith('.h5')]
     if len(h5_files) == 0:
         raise ValueError("No HDF5 files found to merge")
 
     with h5py.File(virtual_file_path, 'w') as f_virtual:
-        dataset_names = ['latitude', 'longitude', 'time', 'channels', 'fields']
-        n_files = [1, 1, len(h5_files), 1, len(h5_files)] # no need for multiple files to define lat/lon/channels 
+        dataset_names = ['latitude', 'longitude', 'time', 'fields']
+        n_files = [1, 1, len(h5_files), len(h5_files)] # no need for multiple files to define lat/lon/channels 
         
         for i, dataset_name in enumerate(dataset_names):
             dtype, shape = get_datasets_info(h5_files[:n_files[i]], dataset_name)
@@ -46,7 +46,7 @@ def create_virtual_dataset(save_path, virtual_file_path):
         f_virtual['fields'].dims[0].attach_scale(f_virtual['time'])
         f_virtual['fields'].dims[1].attach_scale(f_virtual['latitude'])
         f_virtual['fields'].dims[2].attach_scale(f_virtual['longitude'])
-        f_virtual['fields'].dims[3].attach_scale(f_virtual['channels'])
+            # f_virtual['fields'].dims[3].attach_scale(f_virtual['channels'])
 
     print(f"Created virtual HDF5 file at {virtual_file_path}")
 
@@ -54,6 +54,6 @@ if __name__ == "__main__":
     for YEAR in [2017, 2018, 2019, 2020, 2021]:
         # SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_weekly_datasets/"
         # VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_new_virtual.h5"
-        SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI_16B/{YEAR}_weekly_datasets/"
+        SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_16b_datasets/"
         VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_16b_virtual.h5"
         create_virtual_dataset(SAVE_PATH, VIRTUAL_FILE_PATH)

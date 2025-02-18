@@ -28,10 +28,10 @@ MIN_VALUES = [
     150, 0, 0, 150, 150, -1
 ]
 
-YEAR = 2021
+YEAR = 2020
 N_DAYS = 1
 MIN_FILE_SIZE = 258 * 1024 * 1024 # 250 MB
-DTYPE = np.float32
+DTYPE = np.float16
 
 # Function to extract time from filename
 def get_time_from_filename(f):
@@ -112,11 +112,13 @@ if __name__ == "__main__":
     
         weekly_filenames = [filenames[j] for j, t in enumerate(time_array) 
                             if day_start <= t < day_end and os.path.getsize(filenames[j]) >= MIN_FILE_SIZE]
-        
+        weekly_time_array = [t for j, t in enumerate(time_array) 
+                            if day_start <= t < day_end and os.path.getsize(filenames[j]) >= MIN_FILE_SIZE]
+        print(len(weekly_filenames), len(weekly_time_array))
         if weekly_filenames:
-            weekly_time_array = [get_time_from_filename(f) for f in weekly_filenames]
+            # weekly_time_array = [get_time_from_filename(f) for f in weekly_filenames]
             data_array, timestamps, lat, lon = read_data(weekly_filenames)
-            print(data_array.shape, lat.shape, lon.shape)
+            print(data_array.shape, lat.shape, lon.shape, len(weekly_time_array))
             latlon_grid = np.stack(np.meshgrid(lon, lat, indexing='xy'))
             sza = np.stack([cos_zenith_angle_from_timestamp(
                     t_.timestamp(),
@@ -179,7 +181,7 @@ if __name__ == "__main__":
                 with h5py.File(save_path, "w") as new_hf:
                     lat_dataset = new_hf.create_dataset("latitude", data=lat.astype(np.float32))
                     lon_dataset = new_hf.create_dataset("longitude", data=lon.astype(np.float32))
-                    time_dataset = new_hf.create_dataset("time", data=[t_.timestamp() for t_ in weekly_time_array])
+                    time_dataset = new_hf.create_dataset("time", data=[t_.timestamp() for t_ in timestamps])
                     channel_dataset = new_hf.create_dataset("channels", data=NON_HRV_BANDS + ["SZA"])
                     fields = new_hf.create_dataset("fields", data=data_array.astype(DTYPE))
                     

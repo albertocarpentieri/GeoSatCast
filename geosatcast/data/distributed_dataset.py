@@ -106,23 +106,24 @@ class DistributedDataset(Dataset):
         # Precompute all valid (year, t_i, lat_i, lon_i) combinations
         indices = []
         for year in self.years:
-            timestamps = self.timestamps[year][:-100]
+            timestamps = self.timestamps[year]
             diff = timestamps[self.seq_len:] - timestamps[:-self.seq_len]
             idx = np.where(diff == 15*60*(self.seq_len))[0]
+            print(f"Year {year}, indices {len(idx)}, timestamps {len(timestamps)}")
             for i in idx:
                 indices.append((year, int(i)))
         self.indices = indices
         self.len_indices = len(indices)
         self.worker_indices = None
         self.len_worker_indices = None
-        print("global indices computed")
+        print(f"{self.len_indices} global indices computed")
 
     def set_worker_indices(self, indices):
         self.worker_indices = indices
         self.len_worker_indices = len(indices)
     
     def __len__(self):
-        return self.length
+        return self.len_indices
     
     def get_data(self, year, t_i, lat_i, lon_i):
         if not self.load_full:
@@ -140,12 +141,6 @@ class DistributedDataset(Dataset):
 
         inv = self.inv[:, None, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
-        # sza = torch.from_numpy(np.stack([cos_zenith_angle_from_timestamp(
-        #         t_, 
-        #         self.latlon_grid[0, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten(),
-        #         self.latlon_grid[1, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size].flatten())
-        #         for t_ in t])).type(torch.float32)
-        # sza = sza.view(1,-1,self.field_size, self.field_size)
         t = torch.from_numpy(t).type(torch.float32)[None, ..., None, None]
         x = torch.from_numpy(x).type(self.torch_dtype)
         
@@ -221,8 +216,10 @@ class WorkerDistributedSampler(Sampler):
         else:
             self.num_samples = num_samples 
         
-        if self.num_samples > self.total_size / (self.num_replicas / 4):
-            self.num_samples = math.floor(self.total_size / (self.num_replicas / 4))
+        if self.num_samples > self.total_size // (self.num_replicas / 4):
+            print(f"num_samples is bigger than total size / (num_replicas/4). num_samples: {self.num_samples}, total size: {self.total_size}, total_size / (num_replicas / 4): {self.total_size / (self.num_replicas / 4)}")
+            self.num_samples = math.floor(self.total_size // (self.num_replicas / 4))
+            
 
         self.q = self.rank // 4
         print(f"Defining sampler for replica {self.rank} of {self.num_replicas}")
@@ -239,7 +236,7 @@ class WorkerDistributedSampler(Sampler):
             g = torch.Generator()
             g.manual_seed(0)
 
-        iter_indices = torch.randperm(self.total_size, generator=g)[self.q  * self.num_samples : (self.q + 1)  * self.num_samples].tolist() # all processes get the same indices
+        iter_indices = torch.randperm(self.total_size, generator=g)[self.q  * self.num_samples : (self.q + 1)  * self.num_samples].tolist() # all processes in one node get the same time indices
         # iter_indices = torch.randperm(self.total_size, generator=g)[self.rank * self.num_samples : (self.rank+1) * self.num_samples].tolist()
         # if self.rank % 4 == 0:
         print(self.rank, iter_indices[0], iter_indices[-1])

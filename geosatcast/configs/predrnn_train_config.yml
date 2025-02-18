@@ -1,5 +1,5 @@
-ID: 'predrnn-s2-fd_4-nh_64-v1'
-Experiment: 'predrnn-s2-fd_4-nh_64-v1'
+ID: 'predrnn-s2-fd_5-nh_64-v1'
+Experiment: 'predrnn-s2-fd_5-nh_64-v1'
 
 seed: 0
 Dataset:
@@ -8,7 +8,7 @@ Dataset:
   input_seq_len: 3
   num_workers: 16
   prefetch_factor: 16
-  train_length: 128000
+  train_length: 32000
   val_length: 12800
   field_size: 64
   train_years: [2017, 2018, 2019]
@@ -21,15 +21,16 @@ Model:
   in_steps: 2
   in_ch: 11 
   out_ch: 11
-  num_hidden: [64,64,64,64]
+  num_hidden: [64,64,64,64,64]
   tln: True
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/predrnn-s2-fd_4-nh_64-v1/predrnn-s2-fd_4-nh_64-v1_74.pt"
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/predrnn-s2-fd_5-nh_64-v1/predrnn-s2-fd_5-nh_64-v1_27.pt"
 
 Loss:
-  type: "L1"
+  Backprop: "L1"
+  Monitor: "L1"
 
 Trainer:
   opt_patience: 3
@@ -37,5 +38,5 @@ Trainer:
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/PredRNN/'
   max_epochs: 100
   n_steps: 1
-  gradient_clip:
+  gradient_clip: 1
   warmup_steps: 

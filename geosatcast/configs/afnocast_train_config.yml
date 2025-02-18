@@ -1,5 +1,5 @@
-ID: 'AFNOCast-512-s2-tss-ls_0-fd_1-v2'
-Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_1-v2'
+ID: 'AFNOCast-512-s2-tss-ls_0-fd_1-L1-v1'
+Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_1-L1-v1'
 
 seed: 0
 Dataset:
@@ -59,8 +59,8 @@ Checkpoint:
   resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-512-s2-tss-ls_0-fd_1-v2/AFNOCast-512-s2-tss-ls_0-fd_1-v2_19.pt"
 
 Loss:
-  Backprop: "L2"
-  Monitor: "L2"
+  Backprop: "L1"
+  Monitor: "L1"
 
 Trainer:
   opt_patience: 3
