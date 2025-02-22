@@ -10,8 +10,13 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import (
+    ReduceLROnPlateau,
+    CosineAnnealingLR
+)
 from yaml import load, Loader
 
+from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 # Import your modules (adjust these imports as needed)
 from geosatcast.models.predrnn import PredRNN
 
@@ -20,17 +25,15 @@ from distribute_training import (
     setup_logger,
     get_dataloader,
     setup_distributed,
-    load_checkpoint,
-    save_model,
     load_vae,
     reduce_tensor,
     count_parameters,
-    Warmup_Scheduler
+    Warmup_Scheduler,
+    save_model,
+    load_checkpoint
 )
 
-# Constant for number of channels for per-channel losses.
 NUM_CHANNELS = 11
-
 
 def compute_grad_norm(model: nn.Module) -> float:
     """
@@ -45,7 +48,6 @@ def compute_grad_norm(model: nn.Module) -> float:
     )
     return total_norm.item()
 
-
 def log_gradients(model: nn.Module, writer: SummaryWriter, step: int) -> None:
     """
     Log gradients and weights histograms to TensorBoard.
@@ -54,6 +56,44 @@ def log_gradients(model: nn.Module, writer: SummaryWriter, step: int) -> None:
         if param.grad is not None:
             writer.add_histogram(f'Gradients/{name}', param.grad.detach().cpu(), step)
         writer.add_histogram(f'Weights/{name}', param.detach().cpu(), step)
+
+def compute_loss(
+    model: nn.Module,
+    batch: Tuple[torch.Tensor, ...],
+    n_forecast_steps: int,
+    device: str,
+    per_ch: bool = False
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """
+    Compute loss given a batch.
+    Splits the input into x and y based on in_steps and forecast steps.
+    """
+    in_steps = model.module.in_steps  # DDP wrapper, so access via model.module
+    x, _, _, _ = batch
+
+    
+    x, y = x[:, :, :in_steps], x[:, :, in_steps: in_steps + n_forecast_steps]
+
+    if per_ch:
+        x = x.to(device, non_blocking=True).detach()
+    else:
+        x = x.to(device, non_blocking=True)
+
+    y = y.to(device, non_blocking=True).detach()
+    # Merge 'inv' and 'sza' along channel dimension
+
+    # Forward
+    yhat = model(x, n_steps=n_forecast_steps)
+    res = (y - yhat).abs()
+    mae = res.mean()
+    mse = (res ** 2).mean()
+
+    if per_ch:
+        mae_per_ch = res.detach().mean(dim=(0, 2, 3, 4))
+        mse_per_ch = (res.detach() ** 2).mean(dim=(0, 2, 3, 4))
+        return mae, mse, mae_per_ch, mse_per_ch
+
+    return mae, mse, None, None
 
 
 def validate(
@@ -108,49 +148,19 @@ def validate(
             writer.add_scalar(f"Val/MAE_{c}", avg_mae_per_ch[c].item(), epoch)
             writer.add_scalar(f"Val/MSE_{c}", avg_mse_per_ch[c].item(), epoch)
 
-    if config["Loss"]["Monitor"] == "L1":
+    monitor = config["Loss"].get("Monitor", "L1")
+    if monitor == "L1":
         avg_loss = avg_mae
-    elif config["Loss"]["Monitor"] == "L2":
+    elif monitor == "L2":
         avg_loss = avg_mse
     else:
-        avg_loss = avg_mae  # default fallback
+        avg_loss = avg_mae  # fallback
 
     return avg_loss
 
-
-def compute_loss(
-    model: nn.Module,
-    batch: Tuple[torch.Tensor, ...],
-    n_forecast_steps: int,
-    device: str,
-    per_ch: bool = False
-) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-    """
-    Compute loss given a batch.
-    Splits the input into x and y based on in_steps and forecast steps.
-    """
-    in_steps = model.module.in_steps  # DDP wrapper so access via module
-    x, _, _, _ = batch
-    x, y = x[:, :, :in_steps], x[:, :, in_steps: in_steps + n_forecast_steps]
-
-    if per_ch:
-        x = x.to(device, non_blocking=True).detach()
-    else:
-        x = x.to(device, non_blocking=True)
-
-    y = y.to(device, non_blocking=True).detach()
-    yhat = model(x, n_steps=n_forecast_steps)
-    res = (y - yhat).abs()
-    mae = res.mean()
-    mse = (res ** 2).mean()
-
-    if per_ch:
-        mae_per_ch = res.detach().mean(dim=(0, 2, 3, 4))
-        mse_per_ch = (res.detach() ** 2).mean(dim=(0, 2, 3, 4))
-        return mae, mse, mae_per_ch, mse_per_ch
-
-    return mae, mse, None, None
-
+# ------------------------------------------------------------------------
+# TRAIN FUNCTION
+# ------------------------------------------------------------------------
 def train(
     rank: int,
     local_rank: int,
@@ -160,35 +170,41 @@ def train(
     val_loader: torch.utils.data.DataLoader,
     train_sampler: Any,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler._LRScheduler,
     warmup_scheduler: Optional[Warmup_Scheduler],
+    cosine_scheduler: Optional[CosineAnnealingLR],
+    scheduler: Optional[ReduceLROnPlateau],  # rename from 'reduce_on_plateau'
+    start_cosine_epoch: int,
+    T_max: int,
     logger: Any,
-    writer: SummaryWriter
+    writer: Optional[SummaryWriter] = None,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    start_epoch: int = 0
 ) -> None:
+    """
+    Main training loop with optional warmup, optional cosine annealing,
+    and optional reduce_on_plateau (called 'scheduler' here).
+    """
+
     device = f"cuda:{local_rank}"
-    model.to(device)
-    model = DDP(model, device_ids=[local_rank])
-    scaler = torch.amp.GradScaler()
+    
+    # If no scaler provided, create one
+    if scaler is None:
+        scaler = torch.amp.GradScaler()
+
     tot_num_batches = len(train_loader)
     logger.info(f"Total number of batches is: {tot_num_batches}")
+
+    # Number of forecast steps
     n_forecast_steps = int(config["Trainer"].pop("n_steps"))
 
-    checkpoint_path = config["Checkpoint"].get("resume_path", None)
-    start_epoch = 0
-    if checkpoint_path and os.path.isfile(checkpoint_path):
-        start_epoch = load_checkpoint(model, optimizer, scheduler, scaler, checkpoint_path, logger, rank)
-        if warmup_scheduler and tot_num_batches * start_epoch < warmup_scheduler.num_warmup_steps:
-            warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"] - tot_num_batches * start_epoch)
-        
-        
-        # # 2. Manually override the learning rate after loading
-        # lr = config["Trainer"]["lr"]
-        # for param_group in optimizer.param_groups:
-        #     param_group["lr"] = lr
+    max_epochs = config["Trainer"]["max_epochs"]
+    global_step = start_epoch * len(train_loader)
 
-    for epoch in range(start_epoch, config["Trainer"]["max_epochs"]):
+    # Start training
+    for epoch in range(start_epoch, max_epochs):
         seed = int((epoch + 1) ** 2) * (rank + 1)
         set_global_seed(seed)
+
         logger.info(f"Epoch {epoch} - Seed: {seed}")
         train_sampler.set_epoch(epoch)
         model.train()
@@ -198,6 +214,7 @@ def train(
 
         for batch in train_loader:
             optimizer.zero_grad()
+
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
                 losses = compute_loss(model, batch, n_forecast_steps, device)
 
@@ -205,84 +222,149 @@ def train(
                 continue
 
             mae, mse, _, _ = losses
-            # Backward pass with scaling.
-            if config["Loss"]["Backprop"] == "L1":
-                scaler.scale(mae).backward()
-            elif config["Loss"]["Backprop"] == "L2":
-                scaler.scale(mse).backward()
-            else:
-                scaler.scale(mae).backward()
+            # Decide which loss to backprop
+            loss_to_backprop = mae if config["Loss"]["Backprop"] == "L1" else mse
+            scaler.scale(loss_to_backprop).backward()
 
-            # Always unscale to record inf checks.
+            # Unscale and check for NaNs
             scaler.unscale_(optimizer)
             grad_norm = compute_grad_norm(model)
             if not math.isfinite(grad_norm):
                 if rank == 0:
-                    logger.info(f"Batch {num_batches}: Non-finite grad norm ({grad_norm}). Skipping batch.")
-                scaler.update()  # now update finds the inf check recorded by unscale_()
+                    logger.info(
+                        f"Batch {num_batches}: Non-finite grad norm ({grad_norm}). "
+                        f"MAE: {mae.item()}, MSE: {mse.item()} => Skipping batch."
+                    )
+                scaler.update()
                 optimizer.zero_grad()
+
+                # Warmup scheduler step
+                if warmup_scheduler and global_step < warmup_scheduler.num_warmup_steps:
+                    warmup_scheduler.step()
+                elif warmup_scheduler and global_step >= warmup_scheduler.num_warmup_steps:
+                    # Warmup is done
+                    warmup_scheduler = None
                 continue
 
             # if rank == 0:
             #     logger.info(f"Batch {num_batches}: Grad norm: {grad_norm:.4f}")
 
+            # Gradient clipping if requested
             if config["Trainer"].get("gradient_clip", None) is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config["Trainer"]["gradient_clip"], error_if_nonfinite=False)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    config["Trainer"]["gradient_clip"],
+                    error_if_nonfinite=False
+                )
+                # clipped_grad_norm = compute_grad_norm(model)
+                # if rank == 0:
+                #     logger.info(f"Batch {num_batches}: Clipped Grad norm: {clipped_grad_norm:.4f}")
 
+            # Optimizer step
             scaler.step(optimizer)
             scaler.update()
 
             total_mae += mae.item()
             total_mse += mse.item()
             num_batches += 1
+            global_step += 1
 
-            if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
+            # Warmup scheduler step
+            if warmup_scheduler and global_step < warmup_scheduler.num_warmup_steps:
                 warmup_scheduler.step()
-            else:
+            elif warmup_scheduler and global_step >= warmup_scheduler.num_warmup_steps:
+                # Warmup is done
                 warmup_scheduler = None
 
-            global_step = epoch * tot_num_batches + num_batches
+            # Logging
             if rank == 0:
                 if num_batches % 50 == 0:
-                    logger.info(f"Epoch {epoch}, Step {num_batches}: MAE {mae.item():.6f}, MSE {mse.item():.6f}")
-                if num_batches % 10 == 0:
+                    logger.info(
+                        f"Epoch {epoch}, Step {num_batches}: "
+                        f"MAE {mae.item():.6f}, MSE {mse.item():.6f}"
+                    )
+                if writer is not None and num_batches % 10 == 0:
                     writer.add_scalar("Train_minibatch/MAE", mae.item(), global_step)
                     writer.add_scalar("Train_minibatch/MSE", mse.item(), global_step)
                     log_gradients(model, writer, global_step)
 
-        total_mae_tensor = reduce_tensor(torch.tensor(total_mae, device=device), device)
-        total_mse_tensor = reduce_tensor(torch.tensor(total_mse, device=device), device)
+        # End of epoch: compute average train metrics
         if num_batches > 0:
+            total_mae_tensor = reduce_tensor(torch.tensor(total_mae, device=device), device)
+            total_mse_tensor = reduce_tensor(torch.tensor(total_mse, device=device), device)
             avg_mae = total_mae_tensor / num_batches
             avg_mse = total_mse_tensor / num_batches
         else:
-            avg_mae, avg_mse = torch.tensor(0.0), torch.tensor(0.0)
+            avg_mae = torch.tensor(0.0, device=device)
+            avg_mse = torch.tensor(0.0, device=device)
 
         if rank == 0:
-            writer.add_scalar("Train/MAE", avg_mae, epoch)
-            writer.add_scalar("Train/MSE", avg_mse, epoch)
-            logger.info(f"Epoch {epoch}: Avg MAE {avg_mae:.6f}, Avg MSE {avg_mse:.6f}")
-            save_model(model, optimizer, scheduler, config["Checkpoint"]["dirpath"], config["ID"], epoch, config, scaler)
+            logger.info(f"Epoch {epoch}: Train Avg MAE {avg_mae:.6f}, Avg MSE {avg_mse:.6f}")
+            if writer is not None:
+                writer.add_scalar("Train/MAE", avg_mae, epoch)
+                writer.add_scalar("Train/MSE", avg_mse, epoch)
 
+        # Validation
         with torch.no_grad():
             model.eval()
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                val_loss = validate(model, n_forecast_steps, val_loader, device, logger, writer, config, epoch)
+                val_loss = validate(
+                    model,
+                    n_forecast_steps,
+                    val_loader,
+                    device,
+                    logger,
+                    writer,
+                    config,
+                    epoch
+                )
 
-        if warmup_scheduler and num_batches + tot_num_batches * epoch < warmup_scheduler.num_warmup_steps:
-            lr = warmup_scheduler.get_last_lr()[0]
-            logger.info(f"Epoch {epoch}: Warm-up Learning Rate {lr:.6f}")
-        else:
-            scheduler.step(val_loss)
-            lr = scheduler.get_last_lr()[0]
-            logger.info(f"Epoch {epoch}: Learning Rate {lr:.6f}")
-
+        # Saving checkpoint (only on rank 0)
         if rank == 0:
-            writer.add_scalar("Train/LR", lr, epoch)
+            # Additional logging
+            writer.add_scalar("Train/MAE", avg_mae, epoch)
+            writer.add_scalar("Train/MSE", avg_mse, epoch)
+            logger.info(f"Epoch {epoch}: Avg MAE {avg_mae:.6f}, Avg MSE {avg_mse:.6f}")
 
+            save_model(
+                model=model,
+                optimizer=optimizer,
+                warmup_scheduler=warmup_scheduler,
+                cosine_scheduler=cosine_scheduler,
+                scheduler=scheduler,  # reduce-lr-on-plateau
+                dirpath=config["Checkpoint"]["dirpath"],
+                model_id=config["ID"],
+                epoch=epoch,
+                config=config,
+                scaler=scaler
+            )
+
+        # Learning rate logging
+        current_lr = optimizer.param_groups[0]["lr"]
+
+        # 1) If warmup is done and we are at/after start_cosine_epoch, step CosineAnnealingLR
+        if (not warmup_scheduler) and (epoch >= start_cosine_epoch) and cosine_scheduler and (epoch < start_cosine_epoch + T_max):
+            # Typically CosineAnnealingLR is stepped once per epoch
+            cosine_scheduler.step()
+
+        # 2) Then step ReduceLROnPlateau with val_loss (if available)
+        elif (not warmup_scheduler) and scheduler:
+            scheduler.step(val_loss)
+
+        # Log final LR after these operations
+        final_lr = optimizer.param_groups[0]["lr"]
+        if rank == 0:
+            if current_lr != final_lr:
+                logger.info(f"Epoch {epoch} done. LR was {current_lr:.6g}, now {final_lr:.6g}")
+            if writer is not None:
+                writer.add_scalar("Train/LR", final_lr, epoch)
+
+        # Clear GPU cache
         torch.cuda.empty_cache()
 
-
+# ------------------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------------------
 def main() -> None:
     set_global_seed(1996)
     CONFIG_PATH = sys.argv[1]
@@ -299,6 +381,9 @@ def main() -> None:
         writer = SummaryWriter(log_dir=tensor_log_dir)
         logger.info(f"TensorBoard logs will be saved to {tensor_log_dir}")
 
+    # ----------------------------------------------------------------
+    # Build Dataloaders
+    # ----------------------------------------------------------------
     data_config = config["Dataset"]
     train_years = data_config.pop("train_years")
     train_length = data_config.pop("train_length")
@@ -318,37 +403,91 @@ def main() -> None:
         validation=True
     )
 
-    in_steps = config["Model"]["in_steps"]
-
+    # ----------------------------------------------------------------
+    # Build Model
+    # ----------------------------------------------------------------
+   
     model = PredRNN(**config["Model"])
-    
     if rank == 0:
-        logger.info(model)
-        logger.info(f"PredRNN model parameters: {count_parameters(model)}")
+        print(model)
+        print(f"Latent model parameters: {count_parameters(model)}")
+        logger.info(f"Latent model parameters: {count_parameters(model)}")
 
+    device = f"cuda:{local_rank}"
+    model.to(device)
+    model = DDP(model, device_ids=[local_rank])
+
+    # ----------------------------------------------------------------
+    # Optimizer & Optional Schedulers
+    # ----------------------------------------------------------------
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["Trainer"]["lr"])
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        factor=0.25,
-        patience=config["Trainer"]["opt_patience"]
-    )
-    warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"]) if config["Trainer"]["warmup_steps"] else None
 
+    # 1) Warmup
+    warmup_scheduler = None
+    if config["Trainer"].get("warmup_steps", 0) > 0:
+        warmup_scheduler = Warmup_Scheduler(optimizer, config["Trainer"]["warmup_steps"])
+
+    # 2) Cosine
+    T_max = config["Trainer"].get("T_max", 20)
+    eta_min = config["Trainer"].get("eta_min", 1e-5)
+    cosine_scheduler = None
+    if config["Trainer"].get("use_cosine", True):
+        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=T_max, eta_min=eta_min)
+
+    start_cosine_epoch = config["Trainer"].get("start_cosine_epoch", 5)
+
+    # 3) Reduce On Plateau (named 'scheduler' here)
+    scheduler = None
+    if config["Trainer"].get("use_reduce_on_plateau", True):
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            factor=0.25,
+            patience=config["Trainer"]["opt_patience"]
+        )
+
+    # ----------------------------------------------------------------
+    # Optionally load from checkpoint
+    # ----------------------------------------------------------------
+    checkpoint_path = config["Checkpoint"].get("resume_path", None)
+    start_epoch = 0
+    scaler = torch.amp.GradScaler()  # create a scaler for AMP
+    if checkpoint_path and os.path.isfile(checkpoint_path):
+        start_epoch = load_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            warmup_scheduler=warmup_scheduler,
+            cosine_scheduler=cosine_scheduler,
+            scheduler=scheduler,
+            scaler=scaler,
+            checkpoint_path=checkpoint_path,
+            logger=logger,
+            rank=rank
+        )
+
+    # ----------------------------------------------------------------
+    # Start Training
+    # ----------------------------------------------------------------
     train(
-        rank,
-        local_rank,
-        config,
-        model,
-        train_dataloader,
-        val_dataloader,
-        train_sampler,
-        optimizer,
-        scheduler,
-        warmup_scheduler,
-        logger,
-        writer  # type: ignore
+        rank=rank,
+        local_rank=local_rank,
+        config=config,
+        model=model,
+        train_loader=train_dataloader,
+        val_loader=val_dataloader,
+        train_sampler=train_sampler,
+        optimizer=optimizer,
+        warmup_scheduler=warmup_scheduler,
+        cosine_scheduler=cosine_scheduler,
+        scheduler=scheduler,  # reduce-lr-on-plateau
+        start_cosine_epoch=start_cosine_epoch,
+        T_max=T_max,
+        logger=logger,
+        writer=writer,
+        scaler=scaler,
+        start_epoch=start_epoch
     )
-
 
 if __name__ == "__main__":
     main()
+
+

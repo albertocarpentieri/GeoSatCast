@@ -259,6 +259,83 @@ class PredRNN(nn.Module):
 
         return out
 
+class PredRNN_v2(nn.Module):
+    def __init__(self, in_steps, in_ch, out_ch, num_hidden, tln=True):
+        super(PredRNN_v2, self).__init__()
+        
+        self.in_steps = in_steps
+        self.num_hidden = num_hidden
+        self.num_layers = len(self.num_hidden)
+        cell_list = []
+        ghu_list = []
+
+        for i in range(self.num_layers):
+            if i == 0:
+                num_hidden_in = self.num_hidden[-1]
+                in_ch = in_ch
+            else:
+                in_ch = num_hidden_in = self.num_hidden[i-1]
+            cell_list.append(CausalLSTMCell(
+                'lstm_' + str(i + 1),
+                in_ch, 
+                num_hidden_in,
+                num_hidden[i],
+                1.0, 
+                tln=tln))
+        self.cell_list = nn.ModuleList(cell_list)
+        
+        ghu_list.append(GHU('highway', self.num_hidden[0], tln=tln))
+        self.ghu_list = nn.ModuleList(ghu_list)
+
+        self.conv_last = nn.Conv2d(self.num_hidden[-1], out_ch, 1, 1, 0)
+        nn.init.xavier_uniform_(self.conv_last.weight)
+        nn.init.zeros_(self.conv_last.bias)
+
+
+    def forward(self, images, inv, n_steps):
+        # [batch, length, channel, width, height]
+        total_length = n_steps + self.in_steps
+        batch = images.shape[0]
+        height = images.shape[3]
+        width = images.shape[4]
+
+        next_images = []
+        h_t = []
+        c_t = []
+        z_t = None
+        m_t = None
+
+        for i in range(self.num_layers):
+            h_t.append(None)
+            c_t.append(None)
+
+        for t in range(total_length):
+            if t < self.in_steps:
+                net = images[:,:,t]
+            else:
+                net = x_gen
+
+            net = torch.cat((x, inv[:,:,t]), dim=1)
+
+
+            h_t[0], c_t[0], m_t = self.cell_list[0](net, h_t[0], c_t[0], m_t)
+            z_t = self.ghu_list[0](h_t[0],z_t)
+            h_t[1], c_t[1], m_t = self.cell_list[1](z_t, h_t[1], c_t[1], m_t)
+            
+            for i in range(2, self.num_layers):
+                h_t[i], c_t[i], m_t = self.cell_list[i](h_t[i - 1], h_t[i], c_t[i], m_t)
+
+            x_gen = self.conv_last(h_t[self.num_layers-1])
+            if t >= self.in_steps:
+                next_images.append(x_gen)
+
+        # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
+        next_images = torch.stack(next_images, dim=2)
+        out = next_images
+        next_images = []
+
+        return out
+
 if __name__ == "__main__":
     x = torch.randn(1,11,2,256,256)
     predrnn = PredRNN(2, 11, 11, [128,64,64,64],  True)

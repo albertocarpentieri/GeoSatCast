@@ -1,5 +1,5 @@
-ID: 'AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1'
-Experiment: 'AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1'
+ID: 'AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1'
+Experiment: 'AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1'
 
 seed: 0
 Dataset:
@@ -8,12 +8,12 @@ Dataset:
   input_seq_len: 3
   num_workers: 16
   prefetch_factor: 16
-  train_length: 16000
-  val_length: 1600
+  train_length: 32000
+  val_length: 3200
   field_size: 256
   train_years: [2017, 2018, 2019]
   val_years: [2020]
-  batch_size: 16
+  batch_size: 64
   seed: 0
   load_full: True
   dtype: 16
@@ -26,20 +26,20 @@ Encoder:
   norm:
   min_ch: 
   max_ch: 
-  channels: [128, 256, 1024]
+  channels: [128, 256, 512]
   kernel_sizes: [[2,1,1],[1,3,3],[1,3,3]]
   resample_factors: [[2,1,1],[1,2,2],[1,2,2]]
   init: "xavier"
 
 Decoder:
-  in_dim: 1024
+  in_dim: 512
   out_dim: 11
   levels: 2
   extra_resblock_levels: []
   upsampling_mode: "stride"
   norm:
   min_ch: 128
-  max_ch: 1024
+  max_ch: 512
   kernel_size: [1,3,3]
   resample_factor: [1,2,2]
   init: "xavier"
@@ -48,8 +48,8 @@ Model_Type: "AFNONAT"
 
 Model:
   in_steps: 2
-  embed_dim: 1024
-  forecast_depth: 8
+  embed_dim: 512
+  forecast_depth: 2
   afno_num_blocks: 1
   nat_num_blocks: 1
   mlp_ratio: 4
@@ -61,7 +61,7 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_74.pt"
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1_35.pt"
   finetune_path: 
 
 Loss:
@@ -70,15 +70,15 @@ Loss:
 
 Trainer:
   n_steps: 1
-  lr: 0.0005
+  lr: 0.001
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNONATCast/'
   max_epochs: 100
   gradient_clip: .5
-  warmup_steps: 4000
-  use_cosine: True
-  start_cosine_epoch: 10
-  T_max: 20
-  eta_min: 0.00005
+  warmup_steps: 2000
+  use_cosine: False
+  start_cosine_epoch: 0
+  T_max: 0
+  eta_min: 0
   use_reduce_on_plateau: True
   opt_patience: 3
   

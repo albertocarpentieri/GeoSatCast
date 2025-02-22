@@ -1,5 +1,5 @@
-ID: 'predrnn-s2-fd_5-nh_64-v2'
-Experiment: 'predrnn-s2-fd_5-nh_64-v2'
+ID: 'predrnn-inv-s2-fd_5-nh_64-v1'
+Experiment: 'predrnn-inv-s2-fd_5-nh_64-v1'
 
 seed: 0
 Dataset:
@@ -17,11 +17,13 @@ Dataset:
   seed: 0
   load_full: True
 
+Model_Type: PredRNN_v2
+
 Model:
   in_steps: 2
   in_ch: 11 
   out_ch: 11
-  num_hidden: [128, 64, 64, 64, 64]
+  num_hidden: [64, 64, 64, 64, 64]
   tln: True
 
 Checkpoint:

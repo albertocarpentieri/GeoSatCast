@@ -154,7 +154,10 @@ def load_checkpoint(
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     # 1) Load model state
-    model.load_state_dict(checkpoint["model_state_dict"])
+    try:
+        model.load_state_dict({k.replace("module.", ""): v for k, v in checkpoint["model_state_dict"].items()})
+    except:
+        model.load_state_dict(checkpoint["model_state_dict"])
 
     # 2) Load optimizer state
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -167,7 +170,7 @@ def load_checkpoint(
         cosine_scheduler.load_state_dict(checkpoint["cosine_scheduler_state_dict"])
 
     if "scheduler_state_dict" in checkpoint and scheduler is not None:
-        scheduler.load_state_dict(checkpoint["reduce_scheduler_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
     # 4) Load scaler state if present
     if "scaler_state_dict" in checkpoint and scaler is not None:

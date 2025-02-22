@@ -16,9 +16,6 @@ from torch.optim.lr_scheduler import (
 )
 from yaml import load, Loader
 
-# ------------------------------------------------------------------------
-# Your module imports (adjust as needed)
-# ------------------------------------------------------------------------
 from geosatcast.models.autoencoder import Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import (
     NATCastLatent,
@@ -27,6 +24,8 @@ from geosatcast.models.nowcast import (
     DummyLatent,
     Nowcaster
 )
+from geosatcast.models.predrnn import PredRNN_v2
+
 from distribute_training import (
     set_global_seed,
     setup_logger,
@@ -40,14 +39,8 @@ from distribute_training import (
     load_checkpoint
 )
 
-# ------------------------------------------------------------------------
-# Constants
-# ------------------------------------------------------------------------
 NUM_CHANNELS = 11
 
-# ------------------------------------------------------------------------
-# Utility Functions
-# ------------------------------------------------------------------------
 def compute_grad_norm(model: nn.Module) -> float:
     """
     Compute the overall L2 norm of gradients of a model's parameters.
@@ -193,6 +186,7 @@ def train(
     cosine_scheduler: Optional[CosineAnnealingLR],
     scheduler: Optional[ReduceLROnPlateau],  # rename from 'reduce_on_plateau'
     start_cosine_epoch: int,
+    T_max: int,
     logger: Any,
     writer: Optional[SummaryWriter] = None,
     scaler: Optional[torch.cuda.amp.GradScaler] = None,
@@ -202,10 +196,9 @@ def train(
     Main training loop with optional warmup, optional cosine annealing,
     and optional reduce_on_plateau (called 'scheduler' here).
     """
-    device = f"cuda:{local_rank}"
-    model.to(device)
-    model = DDP(model, device_ids=[local_rank])
 
+    device = f"cuda:{local_rank}"
+    
     # If no scaler provided, create one
     if scaler is None:
         scaler = torch.amp.GradScaler()
@@ -217,7 +210,7 @@ def train(
     n_forecast_steps = int(config["Trainer"].pop("n_steps"))
 
     max_epochs = config["Trainer"]["max_epochs"]
-    global_step = 0
+    global_step = start_epoch * len(train_loader)
 
     # Start training
     for epoch in range(start_epoch, max_epochs):
@@ -355,12 +348,12 @@ def train(
         current_lr = optimizer.param_groups[0]["lr"]
 
         # 1) If warmup is done and we are at/after start_cosine_epoch, step CosineAnnealingLR
-        if (not warmup_scheduler) and (epoch >= start_cosine_epoch) and cosine_scheduler:
+        if (not warmup_scheduler) and (epoch >= start_cosine_epoch) and cosine_scheduler and (epoch < start_cosine_epoch + T_max):
             # Typically CosineAnnealingLR is stepped once per epoch
             cosine_scheduler.step()
 
         # 2) Then step ReduceLROnPlateau with val_loss (if available)
-        if scheduler:
+        elif (not warmup_scheduler) and scheduler:
             scheduler.step(val_loss)
 
         # Log final LR after these operations
@@ -417,10 +410,8 @@ def main() -> None:
     # ----------------------------------------------------------------
     # Build Model
     # ----------------------------------------------------------------
-    encoder = Encoder(**config["Encoder"])
-    decoder = Decoder(**config["Decoder"])
-    in_steps = config["Model"].pop("in_steps")
     model_type = config["Model_Type"]
+    in_steps = config["Model"].pop("in_steps")
 
     if model_type == "AFNO":
         latent_model = AFNOCastLatent(**config["Model"])
@@ -431,15 +422,28 @@ def main() -> None:
         logger.info(f"AFNONAT mode: {latent_model.mode}")
     elif model_type == "Dummy":
         latent_model = DummyLatent()
+    elif model_type == "PredRNN_v2":
+        model = PredRNN_v2(**config["Model"], in_steps=in_steps)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
-    model = Nowcaster(latent_model, encoder, decoder, in_steps=in_steps)
-    if rank == 0:
-        logger.info(model)
-        logger.info(f"Encoder parameters: {count_parameters(encoder)}")
-        logger.info(f"Decoder parameters: {count_parameters(decoder)}")
-        logger.info(f"Latent model parameters: {count_parameters(latent_model)}")
+    if model_type in ["Dummy", "AFNO", "NAT", "AFNONAT"]:
+        encoder = Encoder(**config["Encoder"])
+        decoder = Decoder(**config["Decoder"])
+        model = Nowcaster(latent_model, encoder, decoder, in_steps=in_steps)
+        if rank == 0:
+            logger.info(model)
+            logger.info(f"Encoder parameters: {count_parameters(encoder)}")
+            logger.info(f"Decoder parameters: {count_parameters(decoder)}")
+            logger.info(f"Latent model parameters: {count_parameters(latent_model)}")
+    else:
+        if rank == 0:
+            logger.info(model)
+            logger.info(f"Model parameters: {count_parameters(model)}")
+
+    device = f"cuda:{local_rank}"
+    model.to(device)
+    model = DDP(model, device_ids=[local_rank])
 
     # ----------------------------------------------------------------
     # Optimizer & Optional Schedulers
@@ -504,6 +508,7 @@ def main() -> None:
         cosine_scheduler=cosine_scheduler,
         scheduler=scheduler,  # reduce-lr-on-plateau
         start_cosine_epoch=start_cosine_epoch,
+        T_max=T_max,
         logger=logger,
         writer=writer,
         scaler=scaler,
