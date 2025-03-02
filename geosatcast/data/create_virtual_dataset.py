@@ -51,9 +51,9 @@ def create_virtual_dataset(save_path, virtual_file_path):
     print(f"Created virtual HDF5 file at {virtual_file_path}")
 
 if __name__ == "__main__":
-    for YEAR in [2017, 2018, 2019, 2020, 2021]:
+    for YEAR in [2021]:#[2017, 2018, 2019, 2020, 2021]:
         # SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_weekly_datasets/"
         # VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_new_virtual.h5"
-        SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_16b_datasets/"
-        VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_16b_virtual.h5"
+        SAVE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_32b_datasets/" #f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_16b_datasets/"
+        VIRTUAL_FILE_PATH = f"/capstor/scratch/cscs/acarpent/SEVIRI/{YEAR}_32b_virtual.h5"
         create_virtual_dataset(SAVE_PATH, VIRTUAL_FILE_PATH)

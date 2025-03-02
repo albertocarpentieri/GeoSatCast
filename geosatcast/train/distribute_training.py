@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
-from geosatcast.models.predrnn import PredRNN
+from geosatcast.models.predrnn import PredRNN, PredRNN_v2
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
@@ -160,7 +160,12 @@ def load_checkpoint(
         model.load_state_dict(checkpoint["model_state_dict"])
 
     # 2) Load optimizer state
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if "optimizer_state_dict" in checkpoint and optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint["epoch"]  # This is epoch+1 from saving
+    
+    else:
+        start_epoch = 0
 
     # 3) Load each scheduler state if present
     if "warmup_scheduler_state_dict" in checkpoint and warmup_scheduler is not None:
@@ -175,8 +180,6 @@ def load_checkpoint(
     # 4) Load scaler state if present
     if "scaler_state_dict" in checkpoint and scaler is not None:
         scaler.load_state_dict(checkpoint["scaler_state_dict"])
-
-    start_epoch = checkpoint["epoch"]  # This is epoch+1 from saving
 
     if rank == 0:
         logger.info(f"Resumed training from epoch {start_epoch}.")
@@ -333,7 +336,7 @@ def load_nowcaster(ckpt_path, return_config=False, in_steps=2):
         return model, config
     return model
 
-def load_predrnn(ckpt_path, return_config=False):
+def load_predrnn(ckpt_path, return_config=False, in_steps=2):
     """
     Loads model, optimizer, and scheduler states from a checkpoint.
     """
@@ -341,8 +344,9 @@ def load_predrnn(ckpt_path, return_config=False):
     ckpt = torch.load(ckpt_path, map_location="cpu")
     config = ckpt["config"]
 
-    model = PredRNN(
-        **config["Model"]
+    model = PredRNN_v2(
+        **config["Model"],
+        in_steps=in_steps
     )
     state_dict = {
         k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()

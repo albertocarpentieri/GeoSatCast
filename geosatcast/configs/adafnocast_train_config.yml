@@ -1,5 +1,5 @@
-ID: 'NATCast-512-s2-tss-ls_0-ks_5-fd_4-L1-v1'
-Experiment: 'NATCast-512-s2-tss-ls_0-ks_5-fd_4-L1-v1'
+ID: 'AdaFNOCast-512-s2-tss-ls_0-fd_4-L1-v1'
+Experiment: 'AdaFNOCast-512-s2-tss-ls_0-fd_4-L1-v1'
 
 seed: 0
 Dataset:
@@ -43,7 +43,7 @@ Decoder:
   resample_factor: [1,2,2]
   init: "xavier"
 
-Model_Type: "NAT"
+Model_Type: "AdaFNO"
 
 Model:
   in_steps: 2
@@ -52,11 +52,12 @@ Model:
   num_blocks: 1
   mlp_ratio: 4
   norm: 
-  layer_scale: 0.00001
-  kernel_size: 5
+  layer_scale: 0
+  wavelength_crop: all
+  domain_size: 64
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/NATCast/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AdaFNOCast/"
   resume_path: 
 
 Loss:
@@ -66,7 +67,7 @@ Loss:
 Trainer:
   opt_patience: 3
   lr: 0.001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/NATCast/'
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/AdaFNOCast/'
   max_epochs: 100
   n_steps: 1
   gradient_clip: .5

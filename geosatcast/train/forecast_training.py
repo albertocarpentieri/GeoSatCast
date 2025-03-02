@@ -21,8 +21,10 @@ from geosatcast.models.nowcast import (
     NATCastLatent,
     AFNONATCastLatent,
     AFNOCastLatent,
+    AdaFNOCastLatent,
     DummyLatent,
-    Nowcaster
+    Nowcaster,
+    UNAT
 )
 from geosatcast.models.predrnn import PredRNN_v2
 
@@ -212,6 +214,14 @@ def train(
     max_epochs = config["Trainer"]["max_epochs"]
     global_step = start_epoch * len(train_loader)
 
+    config_dtype = config["Trainer"].get("dtype", 32)
+    if config_dtype == 32:
+        dtype = torch.float32 
+    elif config_dtype == 16:
+        dtype = torch.float16
+    else:
+        dtype = torch.bfloat16
+
     # Start training
     for epoch in range(start_epoch, max_epochs):
         seed = int((epoch + 1) ** 2) * (rank + 1)
@@ -227,7 +237,7 @@ def train(
         for batch in train_loader:
             optimizer.zero_grad()
 
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.amp.autocast(device_type='cuda', dtype=dtype):
                 losses = compute_loss(model, batch, n_forecast_steps, device)
 
             if losses is None:
@@ -275,7 +285,7 @@ def train(
             global_step += 1
 
             # Warmup scheduler step
-            if warmup_scheduler and global_step < warmup_scheduler.num_warmup_steps:
+            if warmup_scheduler and global_step <= warmup_scheduler.num_warmup_steps:
                 warmup_scheduler.step()
             elif warmup_scheduler and global_step >= warmup_scheduler.num_warmup_steps:
                 # Warmup is done
@@ -415,11 +425,15 @@ def main() -> None:
 
     if model_type == "AFNO":
         latent_model = AFNOCastLatent(**config["Model"])
+    if model_type == "AdaFNO":
+        latent_model = AdaFNOCastLatent(**config["Model"])
     elif model_type == "NAT":
         latent_model = NATCastLatent(**config["Model"])
     elif model_type == "AFNONAT":
         latent_model = AFNONATCastLatent(**config["Model"])
         logger.info(f"AFNONAT mode: {latent_model.mode}")
+    elif model_type == "UNAT":
+        model = UNAT(**config["Model"])
     elif model_type == "Dummy":
         latent_model = DummyLatent()
     elif model_type == "PredRNN_v2":
@@ -427,7 +441,7 @@ def main() -> None:
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
-    if model_type in ["Dummy", "AFNO", "NAT", "AFNONAT"]:
+    if model_type in ["Dummy", "AFNO", "NAT", "AFNONAT", "AdaFNO"]:
         encoder = Encoder(**config["Encoder"])
         decoder = Decoder(**config["Decoder"])
         model = Nowcaster(latent_model, encoder, decoder, in_steps=in_steps)
@@ -488,6 +502,21 @@ def main() -> None:
             scheduler=scheduler,
             scaler=scaler,
             checkpoint_path=checkpoint_path,
+            logger=logger,
+            rank=rank
+        )
+
+    finetune_path = config["Checkpoint"].get("finetune_path", None)
+    scaler = torch.amp.GradScaler()  # create a scaler for AMP
+    if finetune_path and os.path.isfile(finetune_path):
+        start_epoch = load_checkpoint(
+            model=model,
+            optimizer=None,
+            warmup_scheduler=None,
+            cosine_scheduler=None,
+            scheduler=None,
+            scaler=None,
+            checkpoint_path=finetune_path,
             logger=logger,
             rank=rank
         )

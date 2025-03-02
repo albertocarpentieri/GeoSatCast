@@ -1,11 +1,11 @@
-ID: 'predrnn-inv-s2-fd_5-nh_64-v1'
-Experiment: 'predrnn-inv-s2-fd_5-nh_64-v1'
+ID: 'predrnn-inv-s2-fd_5-nh_64-v1-finetuned'
+Experiment: 'predrnn-inv-s2-fd_5-nh_64-v1-finetuned'
 
 seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
-  input_seq_len: 3
+  input_seq_len: 8
   num_workers: 16
   prefetch_factor: 16
   train_length: 32000
@@ -13,7 +13,7 @@ Dataset:
   field_size: 64
   train_years: [2017, 2018, 2019]
   val_years: [2020]
-  batch_size: 64
+  batch_size: 32
   seed: 0
   load_full: True
 
@@ -21,24 +21,25 @@ Model_Type: PredRNN_v2
 
 Model:
   in_steps: 2
-  in_ch: 11 
+  in_ch: 14
   out_ch: 11
   num_hidden: [64, 64, 64, 64, 64]
   tln: True
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/PredRNN/"
-  resume_path: 
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/"
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/predrnn-inv-s2-fd_5-nh_64-v1-finetuned/predrnn-inv-s2-fd_5-nh_64-v1-finetuned_35.pt"
+  finetune_path: #"/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/predrnn-inv-s2-fd_5-nh_64-v1/predrnn-inv-s2-fd_5-nh_64-v1_99.pt"
 
 Loss:
   Backprop: "L1"
   Monitor: "L1"
 
 Trainer:
-  lr: 0.001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/PredRNN/'
+  lr: 0.0001
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/predrnn/'
   max_epochs: 100
-  n_steps: 1
+  n_steps: 6
   gradient_clip: .5
   warmup_steps: 2000
   use_cosine: False

@@ -1,104 +1,310 @@
-import matplotlib.pyplot as plt 
+# nowcast_test.py
 import numpy as np
-import torch 
+import torch
+import pickle as pkl
+import datetime
+import argparse
+import time
+
+from metrics import (
+    critical_success_index_torch,
+    fraction_skill_score_torch,
+    pearson_correlation_torch,
+    rmse_torch,
+    mae_torch,
+    mean_error_torch
+)
 
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
-from geosatcast.train.distribute_training import load_nowcaster
+from geosatcast.train.distribute_training import load_nowcaster, load_predrnn
 from geosatcast.data.distributed_dataset import DistributedDataset
+from fvcore.nn import FlopCountAnalysis, flop_count_table
 
-import datetime
-import pickle as pkl
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--subset", type=int, default=0,
+                        help="Which subset index to process?")
+    parser.add_argument("--n_subsets", type=int, default=4,
+                        help="How many total subsets?")
+    parser.add_argument("--gpu_id", type=int, default=0,
+                        help="Which GPU to use (0,1,2,3)?")
 
-def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    parser.add_argument("--model_names", type=str, default="AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1",
+                        help="Comma-separated list of model names.")
+    parser.add_argument("--epochs", type=str, default="99",
+                        help="Comma-separated list of epochs.")
 
-np.random.seed(0)
+    parser.add_argument("--in_steps", type=int, default=2,
+                        help="Number of input timesteps.")
+    parser.add_argument("--n_forecast_steps", type=int, default=8,
+                        help="Number of forecast steps to predict.")
+    parser.add_argument("--field_size", type=int, default=256,
+                        help="Spatial size of the subregion.")
+    parser.add_argument("--lat_i", type=int, default=124,
+                        help="Latitude index to extract.")
+    parser.add_argument("--lon_i", type=int, default=124,
+                        help="Longitude index to extract.")
+    parser.add_argument("--n_samples", type=int, default=400,
+                        help="Number of samples to test.")
+
+    args = parser.parse_args()
+    return args
+
+
+def count_parameters(model):
+    """Count the number of trainable parameters in a PyTorch model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 
 def test():
-    model_name = "AFNOCast-512-s2-tss-ls_0-fd_4-v1" #"AFNOCast-512-s2-tss-ls_0-fd_8-v1" #"NATCast-512-s2-tss-ls_0-ks_3-fd_4-v1"
-    epoch = 32 #40 #35
+    args = parse_args()
 
-    nowcaster = load_nowcaster(f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt").to("cuda")
-    print(nowcaster)
-    print(count_parameters(nowcaster))
+    subset_idx = args.subset
+    total_subsets = args.n_subsets
+    gpu_id = args.gpu_id
+    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
+    torch.cuda.set_device(device)
 
-    in_steps = 2
-    n_forecast_steps = 8
+    # Parse model names and epochs
+    model_names = args.model_names.split(",")
+    epochs = [int(e) for e in args.epochs.split(",")]
 
+    in_steps = args.in_steps
+    field_size = args.field_size
+    n_forecast_steps = args.n_forecast_steps
+    lat_i = args.lat_i
+    lon_i = args.lon_i
+    n_samples = args.n_samples
+
+    # Prepare dataset
     dataset = DistributedDataset(
         data_path='/capstor/scratch/cscs/acarpent/SEVIRI',
         invariants_path='/capstor/scratch/cscs/acarpent/SEVIRI/invariants',
-        name='new_virtual',
-        years=[2020],
-        input_len=in_steps+n_forecast_steps,
+        # name='16b_virtual',
+        name='32b_virtual',
+        # years=[2020],
+        years=[2021],
+        input_len=in_steps + n_forecast_steps,
         output_len=None,
         channels=np.arange(11),
-        field_size=512,
+        field_size=field_size,
         length=None,
         validation=True,
         rank=0
     )
 
-
+    # Random sampling
     np.random.seed(0)
-    n_samples = 100
-    indices = np.random.choice(np.arange(len(dataset.indices)), n_samples, replace=False) 
+    full_range = np.arange(len(dataset.indices))
+    np.random.shuffle(full_range)
+    full_range = full_range[:n_samples]
 
-    rmse_map = np.zeros((11,n_forecast_steps,512,512))
-    nan_map = np.zeros((11,n_forecast_steps,512,512))
+    chunk_size = int(np.ceil(n_samples / total_subsets))
+    start = subset_idx * chunk_size
+    end = min(start + chunk_size, n_samples)
+    indices = full_range[start:end]
 
-    metric_dict = {}
+    # Loop over multiple models/epochs
+    for model_name in model_names:
+        for epoch in epochs:
+            print(f"\n=== Testing Model: {model_name}, Epoch: {epoch} ===")
+
+            # Load model
+            if "predrnn" in model_name.lower():
+                nowcaster = load_predrnn(
+                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    in_steps=in_steps
+                ).to(device)
+            else:
+                nowcaster = load_nowcaster(
+                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    in_steps=in_steps
+                ).to(device)
+
+            print(nowcaster)
+            print("Number of parameters:", count_parameters(nowcaster))
+
+            # --- PARTIAL ACCUMULATORS FOR PIXEL-WISE METRICS ---
+            # shape: (channels=11, forecast_steps, field_size, field_size)
+            sum_diff_map = torch.zeros((11, n_forecast_steps, field_size, field_size), device=device)
+            sum_abs_diff_map = torch.zeros_like(sum_diff_map, device=device)
+            sum_sq_diff_map = torch.zeros_like(sum_diff_map, device=device)
+            count_valid_map = torch.zeros_like(sum_diff_map, device=device)  # to store counts
+
+            # Dictionary for sample-wise metrics
+            metric_dict = {}
+
+            # Stats for denormalization
+            stds = dataset.stds.reshape(-1, 1, 1, 1).to(device)
+            means = dataset.means.reshape(-1, 1, 1, 1).to(device)
+            # high_thresholds = means + stds / 2
+            # low_thresholds = means - stds / 2
+
+            # Evaluate each chosen sample
+            for idx in indices:
+                print(f"Processing dataset index: {idx}")
+                year, t_i = dataset.indices[idx]
+
+                x, t, inv, sza = dataset.get_data(
+                    year=year, t_i=t_i,
+                    lat_i=lat_i, lon_i=lon_i
+                )
+                t = t[0, :, 0, 0].numpy().astype(int)
+
+                x = x[None].to(device)   # [1, 11, time, H, W]
+                inv = inv[None].to(device)
+                sza = sza[None].to(device)
+
+                x_in = x[:, :, :in_steps]
+                y_true_ = x[:, :, in_steps:in_steps + n_forecast_steps]
+
+                # Adjust invariants shape
+                sza_inf = sza[:, :, :in_steps + n_forecast_steps - 1]
+                sza_mask = sza[:, :, in_steps:]
+                inv = torch.cat((inv.expand(*inv.shape[:2], *sza_inf.shape[2:]), sza_inf), dim=1)
+
+                # Inference
+                with torch.no_grad():
+                    start_time = time.time()
+                    y_pred_ = nowcaster(x_in, inv, n_steps=n_forecast_steps)
+                    y_pred_[0,0,sza_mask[0,0]<0] = torch.nan
+                    y_pred_[0,7,sza_mask[0,0]<0] = torch.nan
+                    y_pred_[0,8,sza_mask[0,0]<0] = torch.nan
+                    print("Inference time (sec):", time.time() - start_time)
+
+                
+                
+                # Remove batch dim => [11, n_forecast_steps, H, W]
+                y_true_ = y_true_[0] * stds + means
+                y_pred_ = y_pred_[0] * stds + means
+
+                # --- ACCUMULATE PARTIAL SUMS ---
+                diffs = (y_pred_ - y_true_)                     # shape [11, n_forecast_steps, H, W]
+                abs_diffs = torch.abs(diffs)
+                sq_diffs = diffs ** 2
+
+                # Valid = ~NaN in y_pred (or y_true, typically same shape)
+                valid_mask = ~torch.isnan(y_pred_)
+                # You might also exclude NaNs in y_true_ if that's relevant:
+                valid_mask = valid_mask & ~torch.isnan(y_true_)
+
+                # For valid pixels, accumulate sums
+                # We do an in-place where valid_mask = True
+                sum_diff_map += torch.where(valid_mask, diffs, torch.zeros_like(diffs))
+                sum_abs_diff_map += torch.where(valid_mask, abs_diffs, torch.zeros_like(abs_diffs))
+                sum_sq_diff_map += torch.where(valid_mask, sq_diffs, torch.zeros_like(sq_diffs))
+                count_valid_map += valid_mask.type_as(sum_diff_map)
+
+                # --- SAMPLE-WISE METRICS (spatially averaged) ---
+                metric_dict_ = {
+                    "time": t[in_steps:],
+                    "loc": [lat_i, lon_i],
+                    "csi_above": [],
+                    "csi_below": [],
+                    "fss_above_s3": [], "fss_below_s3": [],
+                    "fss_above_s7": [], "fss_below_s7": [],
+                    "fss_above_s15": [], "fss_below_s15": [],
+                    "pearson_corr": [],
+                    "rmse": [],
+                    "mae": [],
+                    "mean_error": []
+                }
+
+                for step in range(n_forecast_steps):
+                    csi_above_step_s = []
+                    csi_below_step_s = []
+                    fss_above_s3_s = []
+                    fss_below_s3_s = []
+                    fss_above_s7_s = []
+                    fss_below_s7_s = []
+                    fss_above_s15_s = []
+                    fss_below_s15_s = []
+                    corr_step_s = []
+                    rmse_step_s = []
+                    mae_step_s = []
+                    me_step_s = []
+
+                    for c in range(11):
+                        y_c_t = y_true_[c, step]   # [H, W]
+                        yhat_c_t = y_pred_[c, step]
+                        
+                        if c in [0,7,8]:
+                            yhat_c_t[y_c_t == 0] = 0
+                        
+                        high_thr = torch.quantile(y_c_t, .8)
+                        low_thr = torch.quantile(y_c_t, .2)
+
+                        csi_abv = critical_success_index_torch(y_c_t, yhat_c_t, high_thr, mode='above')
+                        csi_blw = critical_success_index_torch(y_c_t, yhat_c_t, low_thr, mode='below')
+
+                        fss_abv_s3 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=3, threshold=high_thr, mode='above')
+                        fss_blw_s3 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=3, threshold=low_thr, mode='below')
+                        fss_abv_s7 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=7, threshold=high_thr, mode='above')
+                        fss_blw_s7 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=7, threshold=low_thr, mode='below')
+                        fss_abv_s15 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=15, threshold=high_thr, mode='above')
+                        fss_blw_s15 = fraction_skill_score_torch(y_c_t, yhat_c_t, scale=15, threshold=low_thr, mode='below')
+
+                        corr_val = pearson_correlation_torch(y_c_t, yhat_c_t)
+                        rmse_val = rmse_torch(y_c_t, yhat_c_t)
+                        mae_val = mae_torch(y_c_t, yhat_c_t)
+                        me_val = mean_error_torch(y_c_t, yhat_c_t)
+
+                        csi_above_step_s.append(float(csi_abv.item()))
+                        csi_below_step_s.append(float(csi_blw.item()))
+                        fss_above_s3_s.append(float(fss_abv_s3.item()))
+                        fss_below_s3_s.append(float(fss_blw_s3.item()))
+                        fss_above_s7_s.append(float(fss_abv_s7.item()))
+                        fss_below_s7_s.append(float(fss_blw_s7.item()))
+                        fss_above_s15_s.append(float(fss_abv_s15.item()))
+                        fss_below_s15_s.append(float(fss_blw_s15.item()))
+                        corr_step_s.append(float(corr_val.item()))
+                        rmse_step_s.append(float(rmse_val.item()))
+                        mae_step_s.append(float(mae_val.item()))
+                        me_step_s.append(float(me_val.item()))
     
-    stds = dataset.stds.numpy().reshape(-1,1,1,1)
-    means = dataset.means.numpy().reshape(-1,1,1,1)
-
-    for i in indices:
-        year, t_i = dataset.indices[i]
-        x, t, inv, sza = dataset.get_data(year=year, t_i=t_i, lat_i=224, lon_i=224)
-        x = x[None].to("cuda").detach()
-        inv = inv[None].to("cuda").detach()
-        sza = sza[None].to("cuda").detach()
-        t = t[0,:,0,0].numpy().astype(int)
-
-        sza = sza[:, :, :in_steps+n_forecast_steps-1]
-        x, y = x[:,:,:in_steps], x[:,:,in_steps:in_steps+n_forecast_steps]
-
-        inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
-        with torch.no_grad():
-            yhat = nowcaster(x, inv, n_forecast_steps)
-        
-        y = y[0].cpu().numpy() * stds + means
-        yhat = yhat[0].cpu().numpy() * stds + means
-
-        square_res = (yhat-y)**2
-        abs_res = np.abs(yhat-y)
-        res = yhat - y
-        
-        nans = np.isnan(yhat)
-
-        rmse_map += square_res
-        nan_map += nans.astype(int)
-        rmse = np.sqrt(np.nanmean(square_res, axis=(1,2,3)))
-
-        metric_dict_ = {"res":res, "nan":nans, "time":t[in_steps:], "loc":[224, 224]}
-        metric_dict[datetime.datetime.utcfromtimestamp(t[in_steps])] = metric_dict_
-
-    with open(f"/capstor/scratch/cscs/acarpent/nowcast_results/{model_name}_{epoch}_results_validation.pkl", "wb") as o:
-        pkl.dump(metric_dict, o)
-    print("saved")
 
 
+                    metric_dict_["csi_above"].append(csi_above_step_s)
+                    metric_dict_["csi_below"].append(csi_below_step_s)
+                    metric_dict_["fss_above_s3"].append(fss_above_s3_s)
+                    metric_dict_["fss_below_s3"].append(fss_below_s3_s)
+                    metric_dict_["fss_above_s7"].append(fss_above_s7_s)
+                    metric_dict_["fss_below_s7"].append(fss_below_s7_s)
+                    metric_dict_["fss_above_s15"].append(fss_above_s15_s)
+                    metric_dict_["fss_below_s15"].append(fss_below_s15_s)
+                    metric_dict_["pearson_corr"].append(corr_step_s)
+                    metric_dict_["rmse"].append(rmse_step_s)
+                    metric_dict_["mae"].append(mae_step_s)
+                    metric_dict_["mean_error"].append(me_step_s)
 
-    
-    fig, ax = plt.subplots(n_forecast_steps, 11, figsize=(25, n_forecast_steps*2), sharex=True, sharey=True, constrained_layout=True)
-    for j in range(n_forecast_steps):
-        for i in range(11):
-            rmse_map_ = np.sqrt(rmse_map[i,j] / (n_samples-nan_map[i,j]))
-            rmse_map_[~np.isfinite(rmse_map_)] = np.nan
-            img = ax[j,i].imshow(rmse_map_, interpolation="none", vmin=0, vmax=stds[i]/2)
-            plt.colorbar(img, ax=ax[0,i], shrink=.4)
-        
-    fig.savefig(f"/capstor/scratch/cscs/acarpent/nowcast_results/{model_name}_{epoch}_{j}.png", dpi=200, bbox_inches="tight")
+                init_time = datetime.datetime.utcfromtimestamp(t[in_steps])
+                metric_dict[init_time] = metric_dict_
+
+            # --- Final dictionary to save partial sums (NOT averaged yet) ---
+            # We also store the sample-wise dictionary as usual
+            results = {
+                "sample_metrics": metric_dict,
+                "pixel_metrics": {
+                    # The partial sums and counts
+                    "sum_diff": sum_diff_map.cpu().numpy(),
+                    "sum_abs_diff": sum_abs_diff_map.cpu().numpy(),
+                    "sum_sq_diff": sum_sq_diff_map.cpu().numpy(),
+                    "count_valid": count_valid_map.cpu().numpy()
+                }
+            }
+
+            # Save file (include field size, lat_i, lon_i in name)
+            out_file = (
+                # f"/capstor/scratch/cscs/acarpent/validation_results/"
+                f"/capstor/scratch/cscs/acarpent/test_results/"
+                f"{model_name}_{epoch}_results_{subset_idx}"
+                f"_val_fs{field_size}_lat{lat_i}_lon{lon_i}.pkl"
+            )
+            with open(out_file, "wb") as o:
+                pkl.dump(results, o)
+            print(f"Saved partial sums to: {out_file}")
+
 
 if __name__ == "__main__":
     test()

@@ -309,13 +309,13 @@ class PredRNN_v2(nn.Module):
             h_t.append(None)
             c_t.append(None)
 
-        for t in range(total_length):
+        for t in range(total_length-1):
             if t < self.in_steps:
                 net = images[:,:,t]
             else:
                 net = x_gen
 
-            net = torch.cat((x, inv[:,:,t]), dim=1)
+            net = torch.cat((net, inv[:,:,t]), dim=1)
 
 
             h_t[0], c_t[0], m_t = self.cell_list[0](net, h_t[0], c_t[0], m_t)
@@ -326,7 +326,7 @@ class PredRNN_v2(nn.Module):
                 h_t[i], c_t[i], m_t = self.cell_list[i](h_t[i - 1], h_t[i], c_t[i], m_t)
 
             x_gen = self.conv_last(h_t[self.num_layers-1])
-            if t >= self.in_steps:
+            if t >= self.in_steps-1:
                 next_images.append(x_gen)
 
         # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
