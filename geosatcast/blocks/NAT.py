@@ -3,25 +3,22 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
+
+from geosatcast.utils import normalization, conv_nd, activation
+
+
 import natten
 from natten import NeighborhoodAttention3D as Nat3D
 from natten import NeighborhoodAttention2D as Nat2D
-
-from geosatcast.utils import normalization, conv_nd, activation
+from natten.context import is_fna_enabled
+from natten.utils import check_all_args, log
+from natten.functional import na3d, na3d_av, na3d_qk, na2d, na2d_av, na2d_qk
+from natten.types import CausalArg3DTypeOrDed, Dimension3DTypeOrDed, CausalArg2DTypeOrDed, Dimension2DTypeOrDed
 is_natten_post_017 = hasattr(natten, "context")
 
 
-from natten.context import is_fna_enabled
-from natten.functional import na2d, na2d_av, na2d_qk
-from natten.types import CausalArg2DTypeOrDed, Dimension2DTypeOrDed
-from natten import check_all_args, log
-from natten.functional import na3d, na3d_av, na3d_qk
-from natten.types import CausalArg3DTypeOrDed, Dimension3DTypeOrDed
 
-logger = log.get_logger(__name__)
-
-
-class CrossNeighborhoodAttention2D(nn.Module):
+class CrossNat2D(nn.Module):
     """
     Neighborhood Attention 2D Module
     """
@@ -155,7 +152,7 @@ class CrossNeighborhoodAttention2D(nn.Module):
         )
 
 
-class CrossNeighborhoodAttention3D(nn.Module):
+class CrossNat3D(nn.Module):
     """
     Neighborhood Attention 3D Module
     """
@@ -170,6 +167,7 @@ class CrossNeighborhoodAttention3D(nn.Module):
         rel_pos_bias: bool = False,
         qv_bias: bool = True,
         k_bias: bool = True,
+        qk_scale: Optional[float] = None,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
     ):
@@ -216,7 +214,12 @@ class CrossNeighborhoodAttention3D(nn.Module):
                 f"NeighborhoodAttention2D expected a rank-5 input tensor; got {x.dim()=}."
             )
 
-        B, D, H, W, C = x.shape
+        B, T, H, W, C = x.shape
+
+        if x.shape != y.shape:
+            raise ValueError(
+                f"x.shape musth match y.shape."
+            )
 
         if is_fna_enabled():
             if self.attn_drop_rate > 0:
@@ -228,12 +231,12 @@ class CrossNeighborhoodAttention3D(nn.Module):
                 )
 
             qv = (
-                self.qkv(x)
-                .reshape(B, H, W, 3, self.num_heads, self.head_dim)
-                .permute(3, 0, 1, 2, 4, 5)
+                self.qv(x)
+                .reshape(B, T, H, W, 2, self.num_heads, self.head_dim)
+                .permute(4, 0, 1, 2, 3, 5, 6)
             )
             q, v = qv[0], qv[1]
-            k = self.k(y).reshape(B, H, W, self.num_heads, self.head_dim)
+            k = self.k(y).reshape(B, T, H, W, self.num_heads, self.head_dim)
             x = na3d(
                 q,
                 k,
@@ -244,16 +247,16 @@ class CrossNeighborhoodAttention3D(nn.Module):
                 rpb=self.rpb,
                 scale=self.scale,
             )
-            x = x.reshape(B, D, H, W, C)
+            x = x.reshape(B, T, H, W, C)
 
         else:
             qv = (
-                self.qkv(x)
-                .reshape(B, T, H, W, 3, self.num_heads, self.head_dim)
-                .permute(4, 0, 1, 2, 3, 5, 6)
+                self.qv(x)
+                .reshape(B, T, H, W, 2, self.num_heads, self.head_dim)
+                .permute(4, 0, 5, 1, 2, 3, 6)
             )
             q, v = qv[0], qv[1]
-            k = self.k(y).reshape(B, T, H, W, self.num_heads, self.head_dim)
+            k = self.k(y).reshape(B, T, H, W, self.num_heads, self.head_dim).permute(0, 4, 1, 2, 3, 5)
             q = q * self.scale
             attn = na3d_qk(
                 q,
@@ -272,7 +275,7 @@ class CrossNeighborhoodAttention3D(nn.Module):
                 dilation=self.dilation,
                 is_causal=self.is_causal,
             )
-            x = x.permute(0, 2, 3, 4, 1, 5).reshape(B, D, H, W, C)
+            x = x.permute(0, 2, 3, 4, 1, 5).reshape(B, T, H, W, C)
 
         return self.proj_drop(self.proj(x))
 
@@ -472,10 +475,173 @@ class NATBlock2D(nn.Module):
         x = x + self.gamma2 * self.mlp(self.norm2(x))
         return x
 
+class CrossNATBlock3D(nn.Module):
+    def __init__(
+        self,
+        dim,
+        num_blocks,
+        kernel_size=7,
+        dilation=None,
+        mlp_ratio=4.0,
+        qv_bias=True,
+        k_bias=True,
+        qk_scale=None,
+        drop=0.0,
+        attn_drop=0.0,
+        drop_path=0.0,
+        act="gelu",
+        norm=None,
+        layer_scale=None,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.num_blocks = num_blocks
+        self.mlp_ratio = mlp_ratio
+
+        self.norm1 = normalization(dim, norm)
+        extra_args = {"rel_pos_bias": True} if is_natten_post_017 else {"bias": True}
+        self.attn = CrossNat3D(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_blocks,
+            qv_bias=qv_bias,
+            k_bias=k_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+            **extra_args,
+        )
+        torch.nn.init.zeros_(self.attn.proj.bias)
+        if qv_bias:
+            torch.nn.init.zeros_(self.attn.qv.bias)
+        if k_bias:
+            torch.nn.init.zeros_(self.attn.k.bias)
+        torch.nn.init.xavier_uniform_(self.attn.proj.weight)
+        torch.nn.init.xavier_uniform_(self.attn.qv.weight)
+        torch.nn.init.xavier_uniform_(self.attn.k.weight)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        self.norm2 = normalization(dim, norm)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act=act,
+            drop=drop,
+        )
+        self.layer_scale = False
+        if layer_scale is not None and type(layer_scale) in [int, float]:
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+            self.gamma2 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+
+    def forward(self, x, y):
+        if not self.layer_scale:
+            shortcut = x
+            x = self.norm1(x)
+            x = self.attn(x, y)
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x
+        shortcut = x
+        x = self.norm1(x)
+        x = self.attn(x, y)
+        x = shortcut + self.drop_path(self.gamma1 * x)
+        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
+        return x
+
+class CrossNATBlock2D(nn.Module):
+    def __init__(
+        self,
+        dim,
+        num_blocks,
+        kernel_size=7,
+        dilation=None,
+        mlp_ratio=4.0,
+        qv_bias=True,
+        k_bias=True,
+        qk_scale=None,
+        drop=0.0,
+        attn_drop=0.0,
+        act="gelu",
+        norm=None,
+        layer_scale=None,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.num_blocks = num_blocks
+        self.mlp_ratio = mlp_ratio
+
+        self.norm1 = normalization(dim, norm)
+        extra_args = {"rel_pos_bias": True} if is_natten_post_017 else {"bias": True}
+        self.attn = CrossNat2D(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_blocks,
+            qv_bias=qv_bias,
+            k_bias=k_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+            **extra_args,
+        )
+        torch.nn.init.zeros_(self.attn.proj.bias)
+        if qv_bias:
+            torch.nn.init.zeros_(self.attn.qv.bias)
+        if k_bias:
+            torch.nn.init.zeros_(self.attn.k.bias)
+        torch.nn.init.xavier_uniform_(self.attn.proj.weight)
+        torch.nn.init.xavier_uniform_(self.attn.qv.weight)
+        torch.nn.init.xavier_uniform_(self.attn.k.weight)
+
+        self.norm2 = normalization(dim, norm)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act=act,
+            drop=drop,
+        )
+        self.layer_scale = False
+        if layer_scale is not None and type(layer_scale) in [int, float]:
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+            self.gamma2 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+        
+        elif layer_scale == "uniform":
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(
+                torch.rand(dim) * 1e-3, requires_grad=True
+            )
+            self.gamma2 = nn.Parameter(
+                torch.rand(dim) * 1e-3, requires_grad=True
+            )
+
+    def forward(self, x):
+        if not self.layer_scale:
+            shortcut = x
+            x = self.attn(self.norm1(x), y)
+            x = shortcut + x
+            x = x + self.mlp(self.norm2(x))
+            return x
+        shortcut = x
+        x = self.attn(self.norm1(x), y)
+        x = shortcut + self.gamma1 * x
+        x = x + self.gamma2 * self.mlp(self.norm2(x))
+        return x
+
 
 
 if __name__ == "__main__":
-    nat_block = NATBlock2D(512, 1, (3,3))
-    x = torch.randn((1,64,64,512))
+    nat_block = NATBlock3D(512, 1, (3,3,3))
+    x = torch.randn((1,8,64,64,512))
     x = nat_block(x)
     print(x.shape)

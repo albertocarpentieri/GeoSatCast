@@ -1,5 +1,5 @@
-ID: "UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1" 
-Experiment: "UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1" 
+ID: "try_diffusion" 
+Experiment: "try_diffusion" 
 
 seed: 0
 Dataset:
@@ -18,31 +18,43 @@ Dataset:
   load_full: True
   dtype: 16
 
-Model_Type: "UNAT"
-
 Model:
   in_steps: 2
-  in_channels: 14
+  timesteps: 200,
+  schedule: 'cosine'
+  UNAT_path: '/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_44.pt'
+
+CondEncoder:
+  levels: [0,1]
+  in_channels: [1024,512]
+  out_channels: [1024,512]
+  strides: [[2,1,1],[2,1,1]]
+
+Denoiser:
+  in_channels: 11
   out_channels: 11
   down_channels: [128,512,1024]
   down_strides: [[2,1,1],[1,2,2],[1,2,2]]
   down_block_depths: [0,4,8]
-  down_kernel_sizes: [[0,0],[5,5],[5,5]]
+  down_kernel_sizes: [[0,0,0],[3,5,5],[3,5,5]]
+  down_block_cross: [False,True,True]
   up_channels: [1024,512]
   up_strides: [[1,2,2],[1,2,2]]
   up_block_depths: [4,0]
-  up_kernel_sizes: [[5,5],[5,5],[0,0]]
+  up_kernel_sizes: [[3,5,5],[3,5,5],[0,0]]
+  up_block_cross: [True,False]
   skip_type: "layer_scale"
   skip_down_levels: [1]
   skip_up_levels: [0]
   mlp_ratio: 4
   num_blocks: 1
   layer_scale: 0
-  final_conv: False
+  emb_dim: 256
+  
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_39.pt"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/Diffusion/"
+  resume_path: 
   finetune_path:
 
 Loss:
@@ -52,7 +64,7 @@ Loss:
 Trainer:
   n_steps: 1
   lr: 0.0005
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/UNATCast/'
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/Diffusion/'
   max_epochs: 100
   gradient_clip: .5
   warmup_steps: 4000

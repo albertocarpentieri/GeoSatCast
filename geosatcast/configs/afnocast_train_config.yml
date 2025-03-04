@@ -1,5 +1,5 @@
-ID: 'AFNOCast-512-s2-tss-ls_0-fd_1-L1-v1'
-Experiment: 'AFNOCast-512-s2-tss-ls_0-fd_1-L1-v1'
+ID: 'AFNOCast-1024-s2-tss-ls_0-fd_4-L1-v1'
+Experiment: 'AFNOCast-1024-s2-tss-ls_0-fd_4-L1-v1'
 
 seed: 0
 Dataset:
@@ -8,8 +8,8 @@ Dataset:
   input_seq_len: 3
   num_workers: 16
   prefetch_factor: 16
-  train_length: 128000
-  val_length: 12800
+  train_length: 32000
+  val_length: 3200
   field_size: 256
   train_years: [2017, 2018, 2019]
   val_years: [2020]

@@ -6,7 +6,8 @@ import numpy as np
 from torch.utils.data import DataLoader
 from geosatcast.data.distributed_dataset import DistributedDataset, WorkerDistributedSampler
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
-from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster, UNAT
+from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
+from geosatcast.models.UNAT import UNAT
 from geosatcast.models.predrnn import PredRNN, PredRNN_v2
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import (
