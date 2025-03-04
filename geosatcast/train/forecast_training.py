@@ -151,11 +151,11 @@ def compute_loss(
         inv = inv.to(device, non_blocking=True).detach()
         sza = sza.to(device, non_blocking=True).detach()
     else:
-        x = x.to(device, non_blocking=True)
-        inv = inv.to(device, non_blocking=True)
-        sza = sza.to(device, non_blocking=True)
+        x = x.to(device, non_blocking=True).type(torch.float32)
+        inv = inv.to(device, non_blocking=True).type(torch.float32)
+        sza = sza.to(device, non_blocking=True).type(torch.float32)
 
-    y = y.to(device, non_blocking=True).detach()
+    y = y.to(device, non_blocking=True).detach().type(torch.float32)
     # Merge 'inv' and 'sza' along channel dimension
     inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
 

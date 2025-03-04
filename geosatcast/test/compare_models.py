@@ -522,16 +522,16 @@ if __name__ == "__main__":
 
     pkl_files = [
         [
-            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_6_results_0_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_6_results_1_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_6_results_2_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_6_results_3_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_3_results_0_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_3_results_1_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_3_results_2_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_3_results_3_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
             path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",

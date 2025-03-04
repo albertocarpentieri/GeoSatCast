@@ -17,7 +17,7 @@ from metrics import (
 
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
-from geosatcast.train.distribute_training import load_nowcaster, load_predrnn
+from geosatcast.train.distribute_training import load_nowcaster, load_predrnn, load_unatcast
 from geosatcast.data.distributed_dataset import DistributedDataset
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 
@@ -113,6 +113,11 @@ def test():
             # Load model
             if "predrnn" in model_name.lower():
                 nowcaster = load_predrnn(
+                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    in_steps=in_steps
+                ).to(device)
+            elif "unat" in model_name.lower():
+                nowcaster = load_unatcast(
                     f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
                     in_steps=in_steps
                 ).to(device)
@@ -228,9 +233,6 @@ def test():
                     for c in range(11):
                         y_c_t = y_true_[c, step]   # [H, W]
                         yhat_c_t = y_pred_[c, step]
-                        
-                        if c in [0,7,8]:
-                            yhat_c_t[y_c_t == 0] = 0
                         
                         high_thr = torch.quantile(y_c_t, .8)
                         low_thr = torch.quantile(y_c_t, .2)

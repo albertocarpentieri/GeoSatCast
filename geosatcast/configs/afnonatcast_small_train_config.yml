@@ -61,8 +61,8 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/"
-  resume_path: 
-  finetune_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned_63.pt"
+  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_7.pt"
+  finetune_path: 
 
 Loss:
   Backprop: "L1"
