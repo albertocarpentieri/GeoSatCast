@@ -1,12 +1,291 @@
+from typing import Optional
 import torch 
-import torch.nn as nn
+from torch import nn, Tensor
 import torch.nn.functional as F
+from torch.nn.init import trunc_normal_
 import natten
 from natten import NeighborhoodAttention3D as Nat3D
 from natten import NeighborhoodAttention2D as Nat2D
 
 from geosatcast.utils import normalization, conv_nd, activation
 is_natten_post_017 = hasattr(natten, "context")
+
+
+from natten.context import is_fna_enabled
+from natten.functional import na2d, na2d_av, na2d_qk
+from natten.types import CausalArg2DTypeOrDed, Dimension2DTypeOrDed
+from natten import check_all_args, log
+from natten.functional import na3d, na3d_av, na3d_qk
+from natten.types import CausalArg3DTypeOrDed, Dimension3DTypeOrDed
+
+logger = log.get_logger(__name__)
+
+
+class CrossNeighborhoodAttention2D(nn.Module):
+    """
+    Neighborhood Attention 2D Module
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        kernel_size: Dimension2DTypeOrDed,
+        dilation: Dimension2DTypeOrDed = 1,
+        is_causal: CausalArg2DTypeOrDed = False,
+        rel_pos_bias: bool = False,
+        qv_bias: bool = True,
+        k_bias: bool = True,
+        qk_scale: Optional[float] = None,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+    ):
+        super().__init__()
+        kernel_size_, dilation_, is_causal_ = check_all_args(
+            2, kernel_size, dilation, is_causal
+        )
+        assert len(kernel_size_) == len(dilation_) == len(is_causal_) == 2
+        if any(is_causal_) and rel_pos_bias:
+            raise NotImplementedError(
+                "Causal neighborhood attention is undefined with positional biases."
+                "Please consider disabling positional biases, or open an issue."
+            )
+
+        self.num_heads = num_heads
+        self.head_dim = dim // self.num_heads
+        self.scale = qk_scale or self.head_dim**-0.5
+        self.kernel_size = kernel_size_
+        self.dilation = dilation_
+        self.is_causal = is_causal_
+
+        self.qv = nn.Linear(dim, dim * 2, bias=qv_bias)
+        self.k = nn.Linear(dim, dim, bias=k_bias)
+        if rel_pos_bias:
+            self.rpb = nn.Parameter(
+                torch.zeros(
+                    num_heads,
+                    (2 * self.kernel_size[0] - 1),
+                    (2 * self.kernel_size[1] - 1),
+                )
+            )
+            trunc_normal_(self.rpb, std=0.02, mean=0.0, a=-2.0, b=2.0)
+        else:
+            self.register_parameter("rpb", None)
+        self.attn_drop_rate = attn_drop
+        self.attn_drop = nn.Dropout(self.attn_drop_rate)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+
+    def forward(self, x: Tensor, y: Tensor) -> Tensor:
+        if x.dim() != 4 or y.dim() != 4:
+            raise ValueError(
+                f"CrossNeighborhoodAttention2D expected a rank-4 input tensor; got x dim {x.dim()=} and y dim {y.dim()=}."
+            )
+
+        B, H, W, C = x.shape
+
+        if is_fna_enabled():
+            if self.attn_drop_rate > 0:
+                logger.error(
+                    "You're using fused neighborhood attention, and passed in a "
+                    "non-zero attention dropout rate. This implementation does "
+                    "support attention dropout yet, which means dropout is NOT being applied "
+                    "to your attention weights."
+                )
+
+            qv = (
+                self.qkv(x)
+                .reshape(B, H, W, 3, self.num_heads, self.head_dim)
+                .permute(3, 0, 1, 2, 4, 5)
+            )
+            q, v = qv[0], qv[1]
+
+            k = self.k(y).reshape(B, H, W, self.num_heads, self.head_dim)
+
+            x = na2d(
+                q,
+                k,
+                v,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+                rpb=self.rpb,
+                scale=self.scale,
+            )
+            x = x.reshape(B, H, W, C)
+
+        else:
+            qv = (
+                self.qkv(x)
+                .reshape(B, H, W, 3, self.num_heads, self.head_dim)
+                .permute(3, 0, 1, 2, 4, 5)
+            )
+            q, v = qv[0], qv[1]
+            k = self.k(y).reshape(B, H, W, self.num_heads, self.head_dim)
+            q = q * self.scale
+            attn = na2d_qk(
+                q,
+                k,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+                rpb=self.rpb,
+            )
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = na2d_av(
+                attn,
+                v,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+            )
+            x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
+
+        return self.proj_drop(self.proj(x))
+
+    def extra_repr(self) -> str:
+        return (
+            f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
+            + f"kernel_size={self.kernel_size}, "
+            + f"dilation={self.dilation}, "
+            + f"is_causal={self.is_causal}, "
+            + f"has_bias={self.rpb is not None}"
+        )
+
+
+class CrossNeighborhoodAttention3D(nn.Module):
+    """
+    Neighborhood Attention 3D Module
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        kernel_size: Dimension3DTypeOrDed,
+        dilation: Dimension3DTypeOrDed = 1,
+        is_causal: CausalArg3DTypeOrDed = False,
+        rel_pos_bias: bool = False,
+        qv_bias: bool = True,
+        k_bias: bool = True,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+    ):
+        super().__init__()
+        kernel_size_, dilation_, is_causal_ = check_all_args(
+            3, kernel_size, dilation, is_causal
+        )
+        assert len(kernel_size_) == len(dilation_) == len(is_causal_) == 3
+        if any(is_causal_) and rel_pos_bias:
+            raise NotImplementedError(
+                "Causal neighborhood attention is undefined with positional biases."
+                "Please consider disabling positional biases, or open an issue."
+            )
+
+        self.num_heads = num_heads
+        self.head_dim = dim // self.num_heads
+        self.scale = qk_scale or self.head_dim**-0.5
+        self.kernel_size = kernel_size_
+        self.dilation = dilation_
+        self.is_causal = is_causal_
+
+        self.qv = nn.Linear(dim, dim * 2, bias=qv_bias)
+        self.k = nn.Linear(dim, dim, bias=k_bias)
+        if rel_pos_bias:
+            self.rpb = nn.Parameter(
+                torch.zeros(
+                    num_heads,
+                    (2 * self.kernel_size[0] - 1),
+                    (2 * self.kernel_size[1] - 1),
+                    (2 * self.kernel_size[2] - 1),
+                )
+            )
+            trunc_normal_(self.rpb, std=0.02, mean=0.0, a=-2.0, b=2.0)
+        else:
+            self.register_parameter("rpb", None)
+        self.attn_drop_rate = attn_drop
+        self.attn_drop = nn.Dropout(self.attn_drop_rate)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x: Tensor, y: Tensor) -> Tensor:
+        if x.dim() != 5:
+            raise ValueError(
+                f"NeighborhoodAttention2D expected a rank-5 input tensor; got {x.dim()=}."
+            )
+
+        B, D, H, W, C = x.shape
+
+        if is_fna_enabled():
+            if self.attn_drop_rate > 0:
+                logger.error(
+                    "You're using fused neighborhood attention, and passed in a "
+                    "non-zero attention dropout rate. This implementation does "
+                    "support attention dropout yet, which means dropout is NOT being applied "
+                    "to your attention weights."
+                )
+
+            qv = (
+                self.qkv(x)
+                .reshape(B, H, W, 3, self.num_heads, self.head_dim)
+                .permute(3, 0, 1, 2, 4, 5)
+            )
+            q, v = qv[0], qv[1]
+            k = self.k(y).reshape(B, H, W, self.num_heads, self.head_dim)
+            x = na3d(
+                q,
+                k,
+                v,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+                rpb=self.rpb,
+                scale=self.scale,
+            )
+            x = x.reshape(B, D, H, W, C)
+
+        else:
+            qv = (
+                self.qkv(x)
+                .reshape(B, T, H, W, 3, self.num_heads, self.head_dim)
+                .permute(4, 0, 1, 2, 3, 5, 6)
+            )
+            q, v = qv[0], qv[1]
+            k = self.k(y).reshape(B, T, H, W, self.num_heads, self.head_dim)
+            q = q * self.scale
+            attn = na3d_qk(
+                q,
+                k,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+                rpb=self.rpb,
+            )
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = na3d_av(
+                attn,
+                v,
+                kernel_size=self.kernel_size,
+                dilation=self.dilation,
+                is_causal=self.is_causal,
+            )
+            x = x.permute(0, 2, 3, 4, 1, 5).reshape(B, D, H, W, C)
+
+        return self.proj_drop(self.proj(x))
+
+    def extra_repr(self) -> str:
+        return (
+            f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
+            + f"kernel_size={self.kernel_size}, "
+            + f"dilation={self.dilation}, "
+            + f"is_causal={self.is_causal}, "
+            + f"has_bias={self.rpb is not None}"
+        )
+
+
 
 class Mlp(nn.Module):
     def __init__(
@@ -192,6 +471,7 @@ class NATBlock2D(nn.Module):
         x = shortcut + self.gamma1 * x
         x = x + self.gamma2 * self.mlp(self.norm2(x))
         return x
+
 
 
 if __name__ == "__main__":
