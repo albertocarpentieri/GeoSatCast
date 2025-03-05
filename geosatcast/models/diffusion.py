@@ -28,7 +28,7 @@ def cosine_beta_schedule(timesteps, s=0.008):
     betas = torch.stack(betas)  # shape [timesteps]
     return betas
 
-class VideoDiffusionModel:
+class VideoDiffusionModel(nn.Module):
     """
     Diffusion wrapper that:
       - uses a 3D U-Net with FiLM (local attention only)
@@ -50,14 +50,18 @@ class VideoDiffusionModel:
         
         # Beta schedule
         if schedule == 'cosine':
-            self.betas = cosine_beta_schedule(timesteps)
+            betas = cosine_beta_schedule(timesteps)
         else:
             # fallback or implement other schedules
-            self.betas = torch.linspace(1e-4, 2e-2, timesteps)
+            betas = torch.linspace(1e-4, 2e-2, timesteps)
         
-        self.alphas = 1.0 - self.betas
-        self.alpha_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.alpha_cumprod_prev = F.pad(self.alpha_cumprod[:-1], (1,0), value=1.0)
+        # self.alphas = 1.0 - self.betas
+        # self.alpha_cumprod = torch.cumprod(self.alphas, dim=0)
+        # self.alpha_cumprod_prev = F.pad(self.alpha_cumprod[:-1], (1,0), value=1.0)
+        self.register_buffer("betas", betas)
+        self.register_buffer("alphas", 1.0 - betas)
+        self.register_buffer("alpha_cumprod", torch.cumprod(self.alphas, dim=0))
+        self.register_buffer("alpha_cumprod_prev", F.pad(self.alpha_cumprod[:-1], (1,0), value=1.0))
 
     def q_sample(self, x0_diff, t, noise=None):
         if noise is None:
@@ -65,23 +69,22 @@ class VideoDiffusionModel:
         alpha_t = self.alpha_cumprod[t].reshape(-1,1,1,1,1)
         return torch.sqrt(alpha_t)*x0_diff + torch.sqrt(1-alpha_t)*noise
     
-    def p_losses(self, x_gt, x, xinv, t):
+    def p_losses(self, x_gt, x, xinv, t, n_steps):
         """
         x_gt: [B, C, T, H, W]
         x_forecast: [B, C, T, H, W]
         cond_maps: [B, 2, T, H, W] or whatever the ConditionEncoder expects
         """
         # residual
-        x_forecast, cond_feats = self.cond_encoder(x, xinv, n_steps=x_gt.shape[2])
+        x_forecast, cond_feats = self.cond_encoder(x, xinv, n_steps=n_steps)
         x_diff0 = x_gt - x_forecast
         
         # forward diffuse
-        noise = torch.randn_like(x_diff0)
+        noise = torch.randn_like(x_diff0).to(x.device)
         x_diff_t = self.q_sample(x_diff0, t, noise=noise)
         
         # predict noise
-        noise_pred = self.unet(x_diff_t, t, cond_maps)
-        
+        noise_pred = self.unet(x_diff_t, t, cond_feats)        
         return F.mse_loss(noise_pred, noise)
     
     @torch.no_grad()

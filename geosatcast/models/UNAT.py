@@ -384,7 +384,7 @@ class CondEncoder(nn.Module):
             yhat[:,:,i:i+1] = z
             for z_ in out:
                 s = z_.shape[3:]
-                if s in yhat:
+                if s in cond:
                     cond[s].append(z_)
                 else:
                     cond[s] = [z_]
@@ -394,9 +394,9 @@ class CondEncoder(nn.Module):
         return yhat, cond
     
     def forward(self, x: torch.Tensor, inv: torch.Tensor, n_steps=1):
-        cond = self.cond_forward(x, inv, n_steps)
-        for i, k in enumerate(yhat.keys()):
-            cond[k] = self.layers[i](torch.cat(yhat[k], dim=2)).permute(0,2,3,4,1)
+        yhat, cond = self.cond_forward(x, inv, n_steps)
+        for i, k in enumerate(cond.keys()):
+            cond[k] = self.layers[i](torch.cat(cond[k], dim=2)).permute(0,2,3,4,1)
         return yhat, cond
 
 

@@ -544,3 +544,34 @@ def compute_power_metric(sample: torch.Tensor) -> torch.Tensor:
                 power = fft_result.abs()**2
                 power_values[c, t] = torch.nanmean(power)
     return power_values
+
+
+def compute_crps(forecasts: torch.Tensor, ground_truth: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the Continuous Ranked Probability Score (CRPS) for an ensemble forecast.
+
+    Args:
+        forecasts (torch.Tensor): Ensemble forecasts of shape [M, ...],
+                                  where M is the number of ensemble members and
+                                  ... represents additional dimensions.
+        ground_truth (torch.Tensor): Ground truth values with shape matching a single forecast (i.e. [...]).
+    
+    Returns:
+        torch.Tensor: The averaged CRPS over all elements.
+    
+    The CRPS is computed as:
+        CRPS = (1/M) * sum(|x_m - y|) - (1/(2M^2)) * sum_{m,n}(|x_m - x_n|)
+    where x_m are the ensemble forecast samples and y is the ground truth.
+    """
+    M = forecasts.shape[0]
+    
+    # Term 1: average absolute error between each ensemble member and the ground truth.
+    term1 = torch.mean(torch.abs(forecasts - ground_truth), dim=0)
+    
+    # Term 2: average pairwise absolute differences between ensemble members.
+    diff = torch.abs(forecasts.unsqueeze(0) - forecasts.unsqueeze(1))  # shape [M, M, ...]
+    term2 = torch.mean(diff, dim=(0, 1))
+    
+    # Compute CRPS per element and then average over all elements.
+    crps = term1 - 0.5 * term2
+    return torch.mean(crps)

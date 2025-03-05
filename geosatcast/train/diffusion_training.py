@@ -18,7 +18,7 @@ from yaml import load, Loader
 
 from geosatcast.models.UNAT import UNAT, ViDiffUNAT, CondEncoder
 from geosatcast.models.diffusion import VideoDiffusionModel
-
+from geosatcast.test.metrics import compute_crps
 from distribute_training import (
     set_global_seed,
     setup_logger,
@@ -57,6 +57,84 @@ def log_gradients(model: nn.Module, writer: SummaryWriter, step: int) -> None:
         writer.add_histogram(f'Weights/{name}', param.detach().cpu(), step)
 
 
+# def validate(
+#     model: nn.Module,
+#     in_steps: int,
+#     n_forecast_steps: int,
+#     val_loader: torch.utils.data.DataLoader,
+#     device: str,
+#     logger: Any,
+#     writer: SummaryWriter,
+#     config: dict,
+#     epoch: int
+# ) -> torch.Tensor:
+#     """
+#     Run validation, compute average losses, and log per-channel metrics.
+#     """
+#     model.eval()
+#     total_mse = 0.0
+#     num_batches = 0
+
+#     with torch.no_grad():
+#         for batch in val_loader:
+#             mse = compute_loss(
+#                 model, in_steps, batch, n_forecast_steps, device, validation=True, batch_idx=num_batches
+#             )
+#             total_mse += mse.item()
+#             num_batches += 1
+
+#     total_mse = reduce_tensor(torch.tensor(total_mse, device=device), device)
+
+#     avg_mse = total_mse / num_batches
+
+#     if dist.get_rank() == 0:
+#         logger.info(f"Validation: Avg MSE {avg_mse:.6f}")
+#         writer.add_scalar("Val/MSE", avg_mse, epoch)
+#     return avg_mse
+
+def generate_sample(
+    model: nn.Module,
+    batch: Tuple[torch.Tensor, ...],
+    in_steps: int,
+    n_forecast_steps: int,
+    device: str,
+    indices: list = None
+) -> torch.Tensor:
+    """
+    Generate a sample video sequence from a validation batch using specified indices.
+
+    Args:
+        model (nn.Module): The diffusion model (wrapped in DDP).
+        batch (tuple): A batch from the validation DataLoader (e.g., (x, _, inv, sza)).
+        in_steps (int): Number of historical input timesteps.
+        n_forecast_steps (int): Number of forecast timesteps.
+        device (str): Device string (e.g., "cuda:0").
+        indices (list, optional): List of indices to select from the batch. Defaults to [0] if None.
+
+    Returns:
+        torch.Tensor: Generated video samples with shape [N, C, T, H, W] for the selected indices.
+    """
+    x, _, inv, sza = batch
+    if indices is None:
+        indices = [0]
+    # Select the subset of examples using the provided indices.
+    x = x[indices]
+    inv = inv[indices]
+    sza = sza[indices]
+    
+    # Prepare historical input and conditioning.
+    x_history = x[:, :, :in_steps]
+    sza = sza[:, :, :in_steps + n_forecast_steps - 1]
+    x_inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
+    
+    # Compute forecast base from the condition encoder.
+    x_forecast, _ = model.module.cond_encoder(x_history, x_inv, n_steps=n_forecast_steps)
+    frames_shape = x_forecast.shape  # Expected shape: [B, C, T, H, W]
+    
+    # Generate the residual and add it to the forecast.
+    generated, _ = model.module.sample(x_forecast, x_inv, frames_shape)
+    return generated
+
 def validate(
     model: nn.Module,
     in_steps: int,
@@ -69,27 +147,47 @@ def validate(
     epoch: int
 ) -> torch.Tensor:
     """
-    Run validation, compute average losses, and log per-channel metrics.
+    Run validation by computing the average MSE over the validation set,
+    generate a sample video for visual inspection using specific validation indices,
+    and compute the CRPS metric over an ensemble of forecasts.
+
+    This version does not rely on a fixed example; instead, it selects a batch
+    from the validation set and uses a predefined set of indices (e.g., the first index).
+
+    Returns:
+        torch.Tensor: The average MSE over the validation set.
     """
     model.eval()
     total_mse = 0.0
     num_batches = 0
 
-    with torch.no_grad():
-        for batch in val_loader:
-            mse = compute_loss(
-                model, in_steps, batch, n_forecast_steps, device, validation=True, batch_idx=num_batches
-            )
-            total_mse += mse.item()
-            num_batches += 1
+    # Compute MSE over the validation set.
+    for batch in val_loader:
+        mse = compute_loss(
+            model, in_steps, batch, n_forecast_steps, device,
+            validation=True, batch_idx=num_batches
+        )
+        total_mse += mse.item()
+        if num_batches == 0 and dist.get_rank() == 0:
+            ensemble = []
+            num_ensemble = 4  # Number of ensemble members for CRPS estimation.
+            for _ in range(num_ensemble):
+                sample = generate_sample(model, selected_batch, in_steps, n_forecast_steps, device, indices=[0])
+                ensemble.append(sample.unsqueeze(0))
+            
+            generated_video = sample.permute(0, 2, 1, 3, 4).contiguous()
+            writer.add_video("Val/Generated_Video", generated_video, epoch, fps=1)
+            ensemble = torch.cat(ensemble, dim=0)
+            x, _, _, _ = batch
+            ground_truth = x[0:1, :, in_steps: in_steps+n_forecast_steps].to(device, non_blocking=True).detach()
+            crps_value = compute_crps(ensemble, ground_truth)
+            writer.add_scalar("Val/CRPS", crps_value, epoch)
+            logger.info(f"Epoch {epoch}: CRPS {crps_value:.6f}")
+
+        num_batches += 1
 
     total_mse = reduce_tensor(torch.tensor(total_mse, device=device), device)
-
     avg_mse = total_mse / num_batches
-
-    if dist.get_rank() == 0:
-        logger.info(f"Validation: Avg MSE {avg_mse:.6f}")
-        writer.add_scalar("Val/MSE", avg_mse, epoch)
     return avg_mse
 
 def compute_loss(
@@ -128,10 +226,10 @@ def compute_loss(
     if validation:
         g = torch.Generator()
         g.manual_seed(batch_idx)
-        t = torch.randint(0, model.timesteps, x.shape[0], generator=g)
+        t = torch.randint(model.module.timesteps, (x.shape[0],), generator=g)
     else:
-        t = torch.randint(0, model.timesteps, x.shape[0])
-    mse = model.p_losses(y, x, inv, t)
+        t = torch.randint(model.module.timesteps, (x.shape[0],))
+    mse = model.module.p_losses(y, x, inv, t.to(device, non_blocking=True), n_forecast_steps)
     return mse
 
 # ------------------------------------------------------------------------
@@ -142,6 +240,7 @@ def train(
     local_rank: int,
     config: dict,
     model: nn.Module,
+    in_steps: int,
     train_loader: torch.utils.data.DataLoader,
     val_loader: torch.utils.data.DataLoader,
     train_sampler: Any,
@@ -369,7 +468,6 @@ def main() -> None:
     # ----------------------------------------------------------------
     # Build Model
     # ----------------------------------------------------------------
-    model_type = config["Model_Type"]
     in_steps = config["Model"].pop("in_steps")
 
     unat = load_unatcast(config["Model"].pop("UNAT_path"))

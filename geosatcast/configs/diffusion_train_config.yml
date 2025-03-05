@@ -5,12 +5,12 @@ seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
-  input_seq_len: 3
+  input_seq_len: 8
   num_workers: 16
   prefetch_factor: 16
   train_length: 16000
   val_length: 1600
-  field_size: 256
+  field_size: 128
   train_years: [2017, 2018, 2019]
   val_years: [2020]
   batch_size: 16
@@ -20,7 +20,7 @@ Dataset:
 
 Model:
   in_steps: 2
-  timesteps: 200,
+  timesteps: 200
   schedule: 'cosine'
   UNAT_path: '/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_44.pt'
 
@@ -39,7 +39,7 @@ Denoiser:
   down_kernel_sizes: [[0,0,0],[3,5,5],[3,5,5]]
   down_block_cross: [False,True,True]
   up_channels: [1024,512]
-  up_strides: [[1,2,2],[1,2,2]]
+  up_strides: [[1,2,2],[2,2,2]]
   up_block_depths: [4,0]
   up_kernel_sizes: [[3,5,5],[3,5,5],[0,0]]
   up_block_cross: [True,False]
@@ -62,7 +62,7 @@ Loss:
   Monitor: "L1"
 
 Trainer:
-  n_steps: 1
+  n_steps: 6
   lr: 0.0005
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/Diffusion/'
   max_epochs: 100
