@@ -106,22 +106,22 @@ class VideoDiffusionModel(nn.Module):
             return x_pred
     
     @torch.no_grad()
-    def sample(self, x_forecast, cond_maps, frames_shape):
+    def sample(self, x, inv, n_steps):
         """
         x_forecast: [B, C, T, H, W], we add the predicted residual to it at the end.
         frames_shape: same as x_forecast shape => (B, C, T, H, W)
 
         returns: x_final = x_forecast + predicted_residual
         """
-        device = x_forecast.device
-        x_diff = torch.randn(frames_shape, device=device)
+        device = x.device
+        det_yhat, cond = self.cond_encoder(x, inv, n_steps)
         
-        cond_feats = self.cond_encoder(cond_maps)
-        
+        x_diff = torch.randn(det_yhat.shape, device=device)
+                
         for i in reversed(range(self.timesteps)):
-            t = torch.tensor([i]*frames_shape[0], device=device, dtype=torch.long)
-            x_diff = self.p_sample(x_diff, t, cond_feats)
+            t = torch.tensor([i]*det_yhat.shape[0], device=device, dtype=torch.long)
+            x_diff = self.p_sample(x_diff, t, cond)
         
-        x_final = x_forecast + x_diff
+        x_final = det_yhat + x_diff
         return x_final, x_diff
 

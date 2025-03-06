@@ -9,11 +9,11 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
     CosineAnnealingLR
 )
+from torch.utils.tensorboard import SummaryWriter
 from yaml import load, Loader
 
 from geosatcast.models.UNAT import UNAT, ViDiffUNAT, CondEncoder
@@ -56,84 +56,62 @@ def log_gradients(model: nn.Module, writer: SummaryWriter, step: int) -> None:
             writer.add_histogram(f'Gradients/{name}', param.grad.detach().cpu(), step)
         writer.add_histogram(f'Weights/{name}', param.detach().cpu(), step)
 
-
-# def validate(
-#     model: nn.Module,
-#     in_steps: int,
-#     n_forecast_steps: int,
-#     val_loader: torch.utils.data.DataLoader,
-#     device: str,
-#     logger: Any,
-#     writer: SummaryWriter,
-#     config: dict,
-#     epoch: int
-# ) -> torch.Tensor:
-#     """
-#     Run validation, compute average losses, and log per-channel metrics.
-#     """
-#     model.eval()
-#     total_mse = 0.0
-#     num_batches = 0
-
-#     with torch.no_grad():
-#         for batch in val_loader:
-#             mse = compute_loss(
-#                 model, in_steps, batch, n_forecast_steps, device, validation=True, batch_idx=num_batches
-#             )
-#             total_mse += mse.item()
-#             num_batches += 1
-
-#     total_mse = reduce_tensor(torch.tensor(total_mse, device=device), device)
-
-#     avg_mse = total_mse / num_batches
-
-#     if dist.get_rank() == 0:
-#         logger.info(f"Validation: Avg MSE {avg_mse:.6f}")
-#         writer.add_scalar("Val/MSE", avg_mse, epoch)
-#     return avg_mse
-
-def generate_sample(
+def compute_loss(
     model: nn.Module,
-    batch: Tuple[torch.Tensor, ...],
     in_steps: int,
+    batch: Tuple[torch.Tensor, ...],
     n_forecast_steps: int,
     device: str,
-    indices: list = None
+    validation: bool = False,
+    batch_idx: int = 0,
+    rank: int = 0,
 ) -> torch.Tensor:
     """
-    Generate a sample video sequence from a validation batch using specified indices.
-
-    Args:
-        model (nn.Module): The diffusion model (wrapped in DDP).
-        batch (tuple): A batch from the validation DataLoader (e.g., (x, _, inv, sza)).
-        in_steps (int): Number of historical input timesteps.
-        n_forecast_steps (int): Number of forecast timesteps.
-        device (str): Device string (e.g., "cuda:0").
-        indices (list, optional): List of indices to select from the batch. Defaults to [0] if None.
-
-    Returns:
-        torch.Tensor: Generated video samples with shape [N, C, T, H, W] for the selected indices.
+    Compute MSE loss given a batch.
+    Splits the input into x and y based on in_steps and forecast steps.
     """
     x, _, inv, sza = batch
-    if indices is None:
-        indices = [0]
-    # Select the subset of examples using the provided indices.
-    x = x[indices]
-    inv = inv[indices]
-    sza = sza[indices]
-    
-    # Prepare historical input and conditioning.
-    x_history = x[:, :, :in_steps]
+
+    # Slice the data accordingly
     sza = sza[:, :, :in_steps + n_forecast_steps - 1]
-    x_inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
-    
-    # Compute forecast base from the condition encoder.
-    x_forecast, _ = model.module.cond_encoder(x_history, x_inv, n_steps=n_forecast_steps)
-    frames_shape = x_forecast.shape  # Expected shape: [B, C, T, H, W]
-    
-    # Generate the residual and add it to the forecast.
-    generated, _ = model.module.sample(x_forecast, x_inv, frames_shape)
-    return generated
+    x_in = x[:, :, :in_steps]
+    y = x[:, :, in_steps: in_steps + n_forecast_steps]
+
+    # Move to device
+    if validation:
+        # Detach (optional, but can help ensure no grad is kept in validation)
+        x_in = x_in.to(device, non_blocking=True).detach().float()
+        inv = inv.to(device, non_blocking=True).detach().float()
+        sza = sza.to(device, non_blocking=True).detach().float()
+    else:
+        x_in = x_in.to(device, non_blocking=True).float()
+        inv = inv.to(device, non_blocking=True).float()
+        sza = sza.to(device, non_blocking=True).float()
+
+    y = y.to(device, non_blocking=True).detach().float()
+
+    # Merge 'inv' and 'sza' along channel dimension
+    # e.g. if inv is shape [B, C_inv, H, W], expand time dimension to match 'sza'
+    # (Be sure this is correct for your actual data shapes.)
+    inv_sza = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
+
+    # Sample random diffusion timesteps. For reproducibility in validation,
+    # you can fix or seed them carefully. This can help debug NaNs.
+    # Also ensure model.module.timesteps exists and is correct:
+    timesteps = model.module.timesteps
+    if validation:
+        g = torch.Generator(device=device)
+        g.manual_seed(batch_idx + rank)  # Some offset
+        t = torch.randint(timesteps, (x_in.shape[0],), generator=g, device=device)
+    else:
+        t = torch.randint(timesteps, (x_in.shape[0],), device=device)
+
+    # Forward diffusion loss
+    mse_loss = model.module.p_losses(
+        y, x_in, inv_sza, t, n_forecast_steps
+    )
+
+    return mse_loss
 
 def validate(
     model: nn.Module,
@@ -144,97 +122,53 @@ def validate(
     logger: Any,
     writer: SummaryWriter,
     config: dict,
-    epoch: int
-) -> torch.Tensor:
+    epoch: int,
+    rank: int
+) -> Optional[torch.Tensor]:
     """
     Run validation by computing the average MSE over the validation set,
-    generate a sample video for visual inspection using specific validation indices,
-    and compute the CRPS metric over an ensemble of forecasts.
-
-    This version does not rely on a fixed example; instead, it selects a batch
-    from the validation set and uses a predefined set of indices (e.g., the first index).
-
-    Returns:
-        torch.Tensor: The average MSE over the validation set.
+    while avoiding mismatch across ranks. Summation is done across ranks.
     """
     model.eval()
     total_mse = 0.0
-    num_batches = 0
+    total_batches = 0
 
     # Compute MSE over the validation set.
-    for batch in val_loader:
-        mse = compute_loss(
-            model, in_steps, batch, n_forecast_steps, device,
-            validation=True, batch_idx=num_batches
-        )
+    for batch_idx, batch in enumerate(val_loader):
+        with torch.no_grad():
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                mse = compute_loss(
+                    model, in_steps, batch, n_forecast_steps, device,
+                    validation=True, batch_idx=batch_idx, rank=rank,
+                )
+        # Accumulate
         total_mse += mse.item()
-        if num_batches == 0 and dist.get_rank() == 0:
-            ensemble = []
-            num_ensemble = 4  # Number of ensemble members for CRPS estimation.
-            for _ in range(num_ensemble):
-                sample = generate_sample(model, selected_batch, in_steps, n_forecast_steps, device, indices=[0])
-                ensemble.append(sample.unsqueeze(0))
-            
-            generated_video = sample.permute(0, 2, 1, 3, 4).contiguous()
-            writer.add_video("Val/Generated_Video", generated_video, epoch, fps=1)
-            ensemble = torch.cat(ensemble, dim=0)
-            x, _, _, _ = batch
-            ground_truth = x[0:1, :, in_steps: in_steps+n_forecast_steps].to(device, non_blocking=True).detach()
-            crps_value = compute_crps(ensemble, ground_truth)
-            writer.add_scalar("Val/CRPS", crps_value, epoch)
-            logger.info(f"Epoch {epoch}: CRPS {crps_value:.6f}")
+        total_batches += 1
 
-        num_batches += 1
+    # Now reduce across ranks: we want sum of MSE, sum of batches
+    # so that we can compute an overall average
+    tensor_out = torch.tensor([total_mse, total_batches], device=device, dtype=torch.float32)
+    dist.all_reduce(tensor_out, op=dist.ReduceOp.SUM)
 
-    total_mse = reduce_tensor(torch.tensor(total_mse, device=device), device)
-    avg_mse = total_mse / num_batches
-    return avg_mse
+    global_mse_sum = tensor_out[0].item()
+    global_batch_sum = tensor_out[1].item()
 
-def compute_loss(
-    model: nn.Module,
-    in_steps: int,
-    batch: Tuple[torch.Tensor, ...],
-    n_forecast_steps: int,
-    device: str,
-    validation: bool = False,
-    batch_idx: int = 0,
-) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-    """
-    Compute loss given a batch.
-    Splits the input into x and y based on in_steps and forecast steps.
-    """
-    x, _, inv, sza = batch
+    # If no batches at all, skip
+    if global_batch_sum == 0:
+        # This can happen if the validation set is extremely small or
+        # the distributed sampler is uneven. Just log a warning & return None.
+        if rank == 0:
+            logger.warning("No validation batches found across all ranks.")
+        return None
 
-    # Slice the data accordingly
-    sza = sza[:, :, :in_steps + n_forecast_steps - 1]
-    x, y = x[:, :, :in_steps], x[:, :, in_steps: in_steps + n_forecast_steps]
+    avg_mse = global_mse_sum / global_batch_sum
 
-    if validation:
-        x = x.to(device, non_blocking=True).detach().type(torch.float32)
-        inv = inv.to(device, non_blocking=True).detach().type(torch.float32)
-        sza = sza.to(device, non_blocking=True).detach().type(torch.float32)
-    else:
-        x = x.to(device, non_blocking=True).type(torch.float32)
-        inv = inv.to(device, non_blocking=True).type(torch.float32)
-        sza = sza.to(device, non_blocking=True).type(torch.float32)
+    if rank == 0:
+        logger.info(f"Validation: Avg MSE {avg_mse:.6f}")
+        writer.add_scalar("Val/MSE", avg_mse, epoch)
 
-    y = y.to(device, non_blocking=True).detach().type(torch.float32)
-    # Merge 'inv' and 'sza' along channel dimension
-    inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
+    return torch.tensor(avg_mse, device=device)
 
-    # Forward
-    if validation:
-        g = torch.Generator()
-        g.manual_seed(batch_idx)
-        t = torch.randint(model.module.timesteps, (x.shape[0],), generator=g)
-    else:
-        t = torch.randint(model.module.timesteps, (x.shape[0],))
-    mse = model.module.p_losses(y, x, inv, t.to(device, non_blocking=True), n_forecast_steps)
-    return mse
-
-# ------------------------------------------------------------------------
-# TRAIN FUNCTION
-# ------------------------------------------------------------------------
 def train(
     rank: int,
     local_rank: int,
@@ -245,29 +179,29 @@ def train(
     val_loader: torch.utils.data.DataLoader,
     train_sampler: Any,
     optimizer: torch.optim.Optimizer,
-    warmup_scheduler: Optional[Warmup_Scheduler],
+    warmup_scheduler: Optional[Any],
     cosine_scheduler: Optional[CosineAnnealingLR],
-    scheduler: Optional[ReduceLROnPlateau],  # rename from 'reduce_on_plateau'
+    scheduler: Optional[ReduceLROnPlateau],
     start_cosine_epoch: int,
     T_max: int,
     logger: Any,
     writer: Optional[SummaryWriter] = None,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
     start_epoch: int = 0
 ) -> None:
     """
     Main training loop with optional warmup, optional cosine annealing,
-    and optional reduce_on_plateau (called 'scheduler' here).
+    and optional reduce_on_plateau (named 'scheduler').
     """
 
     device = f"cuda:{local_rank}"
-    
+
     # If no scaler provided, create one
     if scaler is None:
         scaler = torch.amp.GradScaler()
 
     tot_num_batches = len(train_loader)
-    logger.info(f"Total number of batches is: {tot_num_batches}")
+    logger.info(f"Total number of train batches: {tot_num_batches}")
 
     # Number of forecast steps
     n_forecast_steps = int(config["Trainer"].pop("n_steps"))
@@ -277,50 +211,56 @@ def train(
 
     config_dtype = config["Trainer"].get("dtype", 32)
     if config_dtype == 32:
-        dtype = torch.float32 
+        amp_dtype = torch.float32
     elif config_dtype == 16:
-        dtype = torch.float16
+        amp_dtype = torch.float16
     else:
-        dtype = torch.bfloat16
+        amp_dtype = torch.bfloat16
 
-    # Start training
     for epoch in range(start_epoch, max_epochs):
+        # Set seed for reproducibility
         seed = int((epoch + 1) ** 2) * (rank + 1)
         set_global_seed(seed)
-
         logger.info(f"Epoch {epoch} - Seed: {seed}")
+
         train_sampler.set_epoch(epoch)
         model.train()
 
-        total_mae, total_mse = 0.0, 0.0
+        total_train_mse = 0.0
         num_batches = 0
 
-        for batch in train_loader:
+        start_time = time.time()
+        for batch_idx, batch in enumerate(train_loader):
             optimizer.zero_grad()
+            with torch.amp.autocast('cuda', dtype=amp_dtype):
+                loss = compute_loss(
+                    model, in_steps, batch, n_forecast_steps, device,
+                    validation=False, batch_idx=batch_idx
+                )
 
-            with torch.amp.autocast(device_type='cuda', dtype=dtype):
-                loss_to_backprop = compute_loss(model, in_steps, batch, n_forecast_steps, device, batch_idx=num_batches)
-
-            if loss_to_backprop is None:
+            if loss is None or not torch.isfinite(loss):
+                logger.warning(
+                        f"Non-finite loss: {loss.item()} => Skipping batch."
+                    )
                 continue
 
-            scaler.scale(loss_to_backprop).backward()
+            # Backprop in mixed precision
+            scaler.scale(loss).backward()
 
-            # Unscale and check for NaNs
+            # Unscale so we can clip or check grad norm safely
             scaler.unscale_(optimizer)
             grad_norm = compute_grad_norm(model)
             if not math.isfinite(grad_norm):
                 if rank == 0:
-                    logger.info(
-                        f"Batch {num_batches}: Non-finite grad norm ({grad_norm}). "
-                        f"MSE: {loss_to_backprop.item()} => Skipping batch."
+                    logger.warning(
+                        f"Non-finite grad norm ({grad_norm}). "
+                        f"Loss: {loss.item()} => Skipping batch."
                     )
                 scaler.update()
                 optimizer.zero_grad()
                 continue
 
-
-            # Gradient clipping if requested
+            # Optional gradient clip
             if config["Trainer"].get("gradient_clip", None) is not None:
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
@@ -328,66 +268,88 @@ def train(
                     error_if_nonfinite=False
                 )
 
-
             # Optimizer step
             scaler.step(optimizer)
             scaler.update()
 
-            total_mse += loss_to_backprop.item()
+            total_train_mse += loss.item()
             num_batches += 1
             global_step += 1
 
             # Warmup scheduler step
             if warmup_scheduler and global_step <= warmup_scheduler.num_warmup_steps:
                 warmup_scheduler.step()
-            elif warmup_scheduler and global_step >= warmup_scheduler.num_warmup_steps:
-                # Warmup is done
+            elif warmup_scheduler and global_step > warmup_scheduler.num_warmup_steps:
+                # Warmup done
                 warmup_scheduler = None
 
             # Logging
             if rank == 0:
-                if num_batches % 50 == 0:
+                if batch_idx % 50 == 0:
                     logger.info(
-                        f"Epoch {epoch}, Step {num_batches}: "
-                        f"MSE {loss_to_backprop.item():.6f}"
+                        f"Epoch {epoch}, Step {batch_idx}: "
+                        f"MSE {loss.item():.6f}, grad_norm={grad_norm:.3f}"
                     )
-                if writer is not None and num_batches % 10 == 0:
-                    writer.add_scalar("Train_minibatch/MSE", loss_to_backprop.item(), global_step)
-                    log_gradients(model, writer, global_step)
+                if writer is not None and batch_idx % 10 == 0:
+                    writer.add_scalar("Train_minibatch/MSE", loss.item(), global_step)
+                    # log_gradients(model, writer, global_step)  # if you want frequent gradient histograms
 
-        # End of epoch: compute average train metrics
+        end_time = time.time()
+        logger.info(f"Rank {rank} completed epoch {epoch} in {end_time - start_time:.2f}s")
+
+        # Reduce train metrics across ranks
         if num_batches > 0:
-            total_mse_tensor = reduce_tensor(torch.tensor(total_mse, device=device), device)
-            avg_mse = total_mse_tensor / num_batches
+            # For average MSE: sum it across ranks, sum the batch counts, then divide
+            data_out = torch.tensor([total_train_mse, num_batches], device=device)
+            dist.all_reduce(data_out, op=dist.ReduceOp.SUM)
+            global_mse_sum = data_out[0].item()
+            global_batch_count = data_out[1].item()
+            avg_train_mse = global_mse_sum / max(global_batch_count, 1)
         else:
-            avg_mse = torch.tensor(0.0, device=device)
+            # No batches for this rank - reduce anyway
+            data_out = torch.tensor([0.0, 0.0], device=device)
+            dist.all_reduce(data_out, op=dist.ReduceOp.SUM)
+            global_mse_sum = data_out[0].item()
+            global_batch_count = data_out[1].item()
+            if global_batch_count == 0:
+                avg_train_mse = float("nan")
+            else:
+                avg_train_mse = global_mse_sum / global_batch_count
 
         if rank == 0:
-            logger.info(f"Epoch {epoch}: Avg MSE {avg_mse:.6f}")
+            logger.info(f"Epoch {epoch}: Avg Train MSE {avg_train_mse:.6f}")
             if writer is not None:
-                writer.add_scalar("Train/MSE", avg_mse, epoch)
+                writer.add_scalar("Train/MSE", avg_train_mse, epoch)
 
+        # --------------------
         # Validation
+        # --------------------
         with torch.no_grad():
-            model.eval()
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                val_loss = validate(
-                    model,
-                    in_steps,
-                    n_forecast_steps,
-                    val_loader,
-                    device,
-                    logger,
-                    writer,
-                    config,
-                    epoch
-                )
+            val_loss = validate(
+                model,
+                in_steps,
+                n_forecast_steps,
+                val_loader,
+                device,
+                logger,
+                writer,
+                config,
+                epoch,
+                rank
+            )
 
-        # Saving checkpoint (only on rank 0)
+        # Save checkpoint (rank 0 only)
         if rank == 0:
-            # Additional logging
-            writer.add_scalar("Train/MSE", avg_mse, epoch)
-            logger.info(f"Epoch {epoch}: Avg MSE {avg_mse:.6f}")
+            # Log the average train MSE again, or any other metrics
+            if writer is not None:
+                writer.add_scalar("Train/MSE_epoch", avg_train_mse, epoch)
+                        # Additional logging
+            writer.add_scalar("Train/MSE", val_loss, epoch)
+            logger.info(f"Epoch {epoch}: Avg MSE {val_loss:.6f}")
+
+            # If you are returning None from validate() (e.g., no val data),
+            # you might pass 0 or some default to the scheduler.
+            val_for_scheduler = val_loss.item() if val_loss is not None else avg_train_mse
 
             save_model(
                 model=model,
@@ -402,38 +364,36 @@ def train(
                 scaler=scaler
             )
 
-        # Learning rate logging
+        # Update LR schedulers
         current_lr = optimizer.param_groups[0]["lr"]
-
-        # 1) If warmup is done and we are at/after start_cosine_epoch, step CosineAnnealingLR
+        # 1) Cosine annealing
         if (not warmup_scheduler) and (epoch >= start_cosine_epoch) and cosine_scheduler and (epoch < start_cosine_epoch + T_max):
-            # Typically CosineAnnealingLR is stepped once per epoch
             cosine_scheduler.step()
-
-        # 2) Then step ReduceLROnPlateau with val_loss (if available)
+        # 2) ReduceOnPlateau
         elif (not warmup_scheduler) and scheduler:
-            scheduler.step(val_loss)
+            val_for_scheduler = val_loss.item() if (val_loss is not None and torch.isfinite(val_loss)) else avg_train_mse
+            scheduler.step(val_for_scheduler)
 
-        # Log final LR after these operations
         final_lr = optimizer.param_groups[0]["lr"]
         if rank == 0:
-            logger.info(f"Epoch {epoch} done. LR was {current_lr:.6g}, now {final_lr:.6g}")
+            logger.info(f"Epoch {epoch} done. LR from {current_lr:.6g} to {final_lr:.6g}")
             if writer is not None:
                 writer.add_scalar("Train/LR", final_lr, epoch)
 
-        # Clear GPU cache
+        # Clean up
+        dist.barrier()
         torch.cuda.empty_cache()
 
-# ------------------------------------------------------------------------
-# MAIN
-# ------------------------------------------------------------------------
-def main() -> None:
+def main():
+    # ----------------------------------------------------------------
+    # Setup & Configuration
+    # ----------------------------------------------------------------
     set_global_seed(1996)
     CONFIG_PATH = sys.argv[1]
     with open(CONFIG_PATH, "r") as f:
         config = load(f, Loader)
 
-    rank, local_rank = setup_distributed()
+    rank, local_rank = setup_distributed()  # your function
     log_dir = config["Trainer"]["log_dir"]
     logger = setup_logger(log_dir, rank, experiment_name=config["Experiment"])
 
@@ -441,10 +401,10 @@ def main() -> None:
     if rank == 0:
         tensor_log_dir = os.path.join(log_dir, config["Experiment"])
         writer = SummaryWriter(log_dir=tensor_log_dir)
-        logger.info(f"TensorBoard logs will be saved to {tensor_log_dir}")
+        logger.info(f"TensorBoard logs saved to {tensor_log_dir}")
 
     # ----------------------------------------------------------------
-    # Build Dataloaders
+    # Build Dataloaders (ensure you use DistributedSampler for both!)
     # ----------------------------------------------------------------
     data_config = config["Dataset"]
     train_years = data_config.pop("train_years")
@@ -458,27 +418,27 @@ def main() -> None:
         length=train_length,
         validation=False
     )
-    val_dataloader, _ = get_dataloader(
+    val_dataloader, val_sampler = get_dataloader(
         **data_config,
         years=val_years,
         length=val_length,
         validation=True
     )
+    # Make sure val_sampler is a distributed sampler or that you do single-rank validation
+
+    if rank == 0:
+        logger.info(f"Train DataLoader has {len(train_dataloader)} batches.")
+        logger.info(f"Val DataLoader has {len(val_dataloader)} batches.")
 
     # ----------------------------------------------------------------
     # Build Model
     # ----------------------------------------------------------------
     in_steps = config["Model"].pop("in_steps")
-
     unat = load_unatcast(config["Model"].pop("UNAT_path"))
     condencoder = CondEncoder(unat=unat, **config["CondEncoder"])
     denoiser = ViDiffUNAT(**config["Denoiser"])
-    model = VideoDiffusionModel(denoiser,
-        condencoder,
-        **config["Model"])
-
-    device = f"cuda:{local_rank}"
-    model.to(device)
+    model = VideoDiffusionModel(denoiser, condencoder, **config["Model"])
+    model.to(f"cuda:{local_rank}")
     model = DDP(model, device_ids=[local_rank])
 
     # ----------------------------------------------------------------
@@ -500,7 +460,7 @@ def main() -> None:
 
     start_cosine_epoch = config["Trainer"].get("start_cosine_epoch", 5)
 
-    # 3) Reduce On Plateau (named 'scheduler' here)
+    # 3) Reduce On Plateau
     scheduler = None
     if config["Trainer"].get("use_reduce_on_plateau", True):
         scheduler = ReduceLROnPlateau(
@@ -510,11 +470,12 @@ def main() -> None:
         )
 
     # ----------------------------------------------------------------
-    # Optionally load from checkpoint
+    # Optionally load checkpoint
     # ----------------------------------------------------------------
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
+    finetune_path = config["Checkpoint"].get("finetune_path", None)
     start_epoch = 0
-    scaler = torch.amp.GradScaler()  # create a scaler for AMP
+    scaler = torch.cuda.amp.GradScaler()
     if checkpoint_path and os.path.isfile(checkpoint_path):
         start_epoch = load_checkpoint(
             model=model,
@@ -527,11 +488,10 @@ def main() -> None:
             logger=logger,
             rank=rank
         )
-
-    finetune_path = config["Checkpoint"].get("finetune_path", None)
-    scaler = torch.amp.GradScaler()  # create a scaler for AMP
-    if finetune_path and os.path.isfile(finetune_path):
-        start_epoch = load_checkpoint(
+    
+    elif finetune_path and os.path.isfile(finetune_path):
+        # Typically for fine-tuning you might skip loading the optimizer states
+        load_checkpoint(
             model=model,
             optimizer=None,
             warmup_scheduler=None,
@@ -558,7 +518,7 @@ def main() -> None:
         optimizer=optimizer,
         warmup_scheduler=warmup_scheduler,
         cosine_scheduler=cosine_scheduler,
-        scheduler=scheduler,  # reduce-lr-on-plateau
+        scheduler=scheduler,
         start_cosine_epoch=start_cosine_epoch,
         T_max=T_max,
         logger=logger,

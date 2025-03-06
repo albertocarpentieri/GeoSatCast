@@ -147,15 +147,15 @@ def compute_loss(
     x, y = x[:, :, :in_steps], x[:, :, in_steps: in_steps + n_forecast_steps]
 
     if per_ch:
-        x = x.to(device, non_blocking=True).detach()
-        inv = inv.to(device, non_blocking=True).detach()
-        sza = sza.to(device, non_blocking=True).detach()
+        x = x.to(device, non_blocking=True).float()
+        inv = inv.to(device, non_blocking=True).float()
+        sza = sza.to(device, non_blocking=True).float()
     else:
-        x = x.to(device, non_blocking=True).type(torch.float32)
-        inv = inv.to(device, non_blocking=True).type(torch.float32)
-        sza = sza.to(device, non_blocking=True).type(torch.float32)
+        x = x.to(device, non_blocking=True).float()
+        inv = inv.to(device, non_blocking=True).float()
+        sza = sza.to(device, non_blocking=True).float()
 
-    y = y.to(device, non_blocking=True).detach().type(torch.float32)
+    y = y.to(device, non_blocking=True).detach().float()
     # Merge 'inv' and 'sza' along channel dimension
     inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
 
@@ -218,9 +218,9 @@ def train(
     if config_dtype == 32:
         dtype = torch.float32 
     elif config_dtype == 16:
-        dtype = torch.float16
-    else:
         dtype = torch.bfloat16
+    # else:
+    #     dtype = torch.bfloat16
 
     # Start training
     for epoch in range(start_epoch, max_epochs):
@@ -301,7 +301,7 @@ def train(
                 if writer is not None and num_batches % 10 == 0:
                     writer.add_scalar("Train_minibatch/MAE", mae.item(), global_step)
                     writer.add_scalar("Train_minibatch/MSE", mse.item(), global_step)
-                    log_gradients(model, writer, global_step)
+                    # log_gradients(model, writer, global_step)
 
         # End of epoch: compute average train metrics
         if num_batches > 0:

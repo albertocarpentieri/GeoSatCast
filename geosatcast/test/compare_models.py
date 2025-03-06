@@ -498,7 +498,8 @@ if __name__ == "__main__":
     In a real workflow, you might parse arguments to handle multiple .pkl files dynamically.
     """
     # Paths to your .pkl metric files (one per model)
-    path = "/capstor/scratch/cscs/acarpent/test_results/"
+    # path = "/capstor/scratch/cscs/acarpent/test_results/"
+    path = "/capstor/scratch/cscs/acarpent/validation_results/"
 
 
     # pkl_files = [
@@ -516,39 +517,81 @@ if __name__ == "__main__":
     #     ],
     #     [
     #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
+    #     ]
+    # ]
+
+    # pkl_files = [
+    #     [
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_3_val_fs768_lat56_lon138.pkl",
+    #     ],
+    #     [
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_3_val_fs768_lat56_lon138.pkl",
+    #     ]
+    # ]
+    # pkl_files = [
+    #     [
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_3_val_fs768_lat56_lon138.pkl",
+    #     ],
+    #     [
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1_99_results_3_val_fs768_lat56_lon138.pkl",
+    #     ],
+    #     [
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_99_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_99_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_99_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_99_results_3_val_fs768_lat56_lon138.pkl",
     #     ]
     # ]
 
     pkl_files = [
         [
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_34_results_0_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_34_results_1_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_34_results_2_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_34_results_3_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_0_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_1_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_2_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_34_results_0_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_34_results_1_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_34_results_2_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1_34_results_3_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_0_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_1_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_2_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_3_val_fs768_lat56_lon138.pkl",
         ],
+        [
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_3_val_fs768_lat56_lon138.pkl",
+        ]
     ]
 
 
 
     # Names of each model
     model_names = [
-        "AFNONATCast - large",
-        "UNAT - large",
+        "UNATCast",
+        "PredRNN ++",
+        "AFNONATCast"
     ]
 
     compare_models(
         model_pkl_paths=pkl_files,
         model_names=model_names,
         epochs=None,
-        plot_save_dir=os.path.join(path, "unat-vs-afnonat-plots"),
-        table_save_dir=os.path.join(path, "unat-vs-afnonat-plots")
+        plot_save_dir=os.path.join(path, "unat-vs-predrnn-vs-afnonatcast-256-plots"),
+        table_save_dir=os.path.join(path, "unat-vs-predrnn-vs-afnonatcast-256-plots")
     )

@@ -87,16 +87,34 @@ def process_forecast(x, inv, sza, in_steps, n_forecast_steps, models, stds, mean
 
     return forecasts
 
-
+LAT = [18.15, 62.1]
+LON = [-16.1, 36.1]
 # --------------------------------------------------
 # Plotting
 # --------------------------------------------------
-def plot_results_per_step(y, forecasts, t, channel_names, out_dir, stds):
-    """One plot per time step, showing all channels in subplots."""
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# You can define a helper function to compute the lat/lon values based on the image size
+def get_lat_lon_indices(lat_i, lon_i, field_size, data_shape):
+    """
+    Compute latitude and longitude for each pixel in the image.
+    lat_i, lon_i are the starting indices, field_size is the size of the image in each direction,
+    and data_shape is the shape of the data array (rows, cols).
+    """
+    lats = np.linspace(lat_i, lat_i + field_size, data_shape[0])
+    lons = np.linspace(lon_i, lon_i + field_size, data_shape[1])
+    return lats, lons
+
+def plot_results_per_step(y, forecasts, t, channel_names, out_dir, stds, lats, lons):
+    """One plot per time step, showing all channels in subplots with lat/lon labels."""
     model_names = list(forecasts.keys())
     n_models = len(model_names)
     n_channels = y.shape[0]
     n_steps = y.shape[1]
+
+    # Get the latitude and longitude indices
 
     for j in range(n_steps):
         fig, ax = plt.subplots(
@@ -109,8 +127,14 @@ def plot_results_per_step(y, forecasts, t, channel_names, out_dir, stds):
 
         # Observed row
         for i in range(n_channels):
-            ax[0, i].imshow(y[i, j], vmin=y[i].min(), vmax=y[i].max(), interpolation="none")
+            img = ax[0, i].imshow(y[i, j], vmin=y[i].min(), vmax=y[i].max(), interpolation="none")
             ax[0, i].set_title(channel_names[i])
+            ax[0, i].set_xlabel('Longitude')
+            ax[0, i].set_ylabel('Latitude')
+            ax[0, i].set_xticks(np.linspace(0, y.shape[2], 5))
+            ax[0, i].set_xticklabels(np.round(np.linspace(LON[0], LON[-1], 5), 2))
+            ax[0, i].set_yticks(np.linspace(0, y.shape[1], 5))
+            ax[0, i].set_yticklabels(np.round(np.linspace(LAT[0], LAT[-1], 5), 2))
         ax[0, 0].set_ylabel("Observed")
 
         # Each model forecast row
@@ -123,14 +147,19 @@ def plot_results_per_step(y, forecasts, t, channel_names, out_dir, stds):
                     vmax=y[i].max(),
                     interpolation="none"
                 )
+                ax[m_idx, i].set_xlabel('Longitude')
+                ax[m_idx, i].set_ylabel('Latitude')
+                ax[m_idx, i].set_xticks(np.linspace(0, y.shape[2], 5))
+                ax[m_idx, i].set_xticklabels(np.round(np.linspace(LON[0], LON[-1], 5), 2))
+                ax[m_idx, i].set_yticks(np.linspace(0, y.shape[1], 5))
+                ax[m_idx, i].set_yticklabels(np.round(np.linspace(LAT[0], LAT[-1], 5), 2))
             ax[m_idx, 0].set_ylabel(model_name)
 
         # Differences row (model - obs)
-        # Put them below all
         for m_idx, model_name in enumerate(model_names, start=1):
             forecast = forecasts[model_name]
             for i in range(n_channels):
-                ax[n_models + 1, i].imshow(
+                img = ax[n_models + 1, i].imshow(
                     forecast[i, j] - y[i, j],
                     vmin=-stds[i], vmax=stds[i], cmap="bwr", interpolation="none"
                 )
@@ -145,61 +174,67 @@ def plot_results_per_step(y, forecasts, t, channel_names, out_dir, stds):
         plt.savefig(fname, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-
-def plot_results_per_channel(y, forecasts, t, channel_names, out_dir):
-    """One plot per channel, showing multiple time steps and models."""
+def plot_results_per_channel(y, forecasts, t, channel_names, out_dir, lats, lons):
+    """One plot per channel, showing multiple time steps and models with lat/lon labels."""
     model_names = list(forecasts.keys())
     n_models = len(model_names)
     n_channels = y.shape[0]
     n_steps = y.shape[1]
 
-    # We'll plot a grid: each row is a time step, each column is (obs + models)
-    # That can get large quickly, so we might do subplots for each channel.
+    # Define steps to plot
+    steps = [0] + list(range(3, n_steps, 4))
 
     for ch_idx, channel in enumerate(channel_names):
         fig, axs = plt.subplots(
-            n_steps, 1 + n_models,  # obs + models
-            figsize=(4 * (1 + n_models), 3 * n_steps),
+            len(steps), 1 + n_models,  # obs + models
+            figsize=(4 * (n_models), 3 * len(steps)),
             sharex=True, sharey=True,
             constrained_layout=True
         )
         if n_steps == 1:
-            # single step edge case -> 2D array of axes won't work as expected
             axs = [axs]
 
         fig.suptitle(f"Channel: {channel}")
 
-        for j in range(n_steps):
-            # Observed
-            if n_steps == 1:
-                ax_obs = axs[0]
-            else:
-                ax_obs = axs[j]
+        for j, step in enumerate(steps):
+            ax_obs = axs[j]
 
-            # row = j, col = 0 for the observed
+            # Observed image
             ax_obs[0].imshow(
-                y[ch_idx, j], 
+                y[ch_idx, step], 
                 interpolation="none",
                 vmin=y[ch_idx].min(),
-                vmax=y[ch_idx].max(),)
-            ax_obs[0].set_title(f"Obs (t={t[j].strftime('%H:%M:%S')})")
+                vmax=y[ch_idx].max())
+            ax_obs[0].set_title(f"Obs (t={t[step].strftime('%H:%M:%S')})")
+            if step == steps[-1]:
+                ax_obs[0].set_xlabel('Longitude')
+            ax_obs[0].set_ylabel('Latitude')
+            ax_obs[0].set_xticks(np.linspace(0, y[ch_idx].shape[2]-1, 5))
+            ax_obs[0].set_xticklabels([str(round(lons[int(i)], 2)) + "˚" for i in np.linspace(0, y[ch_idx].shape[2]-1, 5)])
+            ax_obs[0].set_yticks(np.linspace(0, y[ch_idx].shape[1]-1, 5))
+            ax_obs[0].set_yticklabels([str(round(lats[int(i)], 2)) + "˚" for i in np.linspace(0, y[ch_idx].shape[1]-1, 5)])
 
-            
-            # now each model
+            # Model forecasts
             for m_idx, model_name in enumerate(model_names, start=1):
-                if ch_idx in [0,7,8]:
-                    forecasts[model_name][ch_idx, j][y[ch_idx, j]==0] = 0
-            
+                if ch_idx in [0, 7, 8]:
+                    # Zero out pixels where observed image is 0.
+                    forecasts[model_name][ch_idx, step][y[ch_idx, step] == 0] = 0
+                
                 ax_obs[m_idx].imshow(
-                    forecasts[model_name][ch_idx, j],
+                    forecasts[model_name][ch_idx, step],
                     interpolation="none",
                     vmin=y[ch_idx].min(),
                     vmax=y[ch_idx].max(),
                 )
-                ax_obs[m_idx].set_title(
-                    f"{model_name} (t={t[j].strftime('%H:%M:%S')})")
+                ax_obs[m_idx].set_title(f"{model_name} (+ {15 * (step + 1)} min)")
+                if step == steps[-1]:
+                    ax_obs[m_idx].set_xlabel('Longitude')
+                ax_obs[m_idx].set_xticks(np.linspace(0, y[ch_idx].shape[2]-1, 5))
+                ax_obs[m_idx].set_xticklabels([str(round(lons[int(i)], 2)) + "˚" for i in np.linspace(0, y[ch_idx].shape[2]-1, 5)])
+                ax_obs[m_idx].set_yticks(np.linspace(0, y[ch_idx].shape[1]-1, 5))
+                ax_obs[m_idx].set_yticklabels([str(round(lats[int(i)], 2)) + "˚" for i in np.linspace(0, y[ch_idx].shape[1]-1, 5)])
 
-        fname = os.path.join(out_dir, f"forecast_{channel}_{t[0].strftime('%Y%m%d_%H:%M:%S')}.png")
+        fname = os.path.join(out_dir, f"forecast_{channel}_{t[0].strftime('%Y%m%d_%H%M%S')}.png")
         plt.savefig(fname, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
@@ -213,8 +248,8 @@ if __name__ == "__main__":
 
     # Setup model paths
     model_paths = {
-        "AFNONATCast - small": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_6.pt",
-        "AFNONATCast - large": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_0.pt",
+        "AFNONATCast - small": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13.pt",
+        "AFNONATCast - large": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14.pt",
         "PredRNN ++": "/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/predrnn-inv-s2-fd_5-nh_64-v1-finetuned/predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45.pt"
     }
 
@@ -273,16 +308,23 @@ if __name__ == "__main__":
 
     stds = dataset.stds.numpy().reshape(-1, 1, 1, 1)
     means = dataset.means.numpy().reshape(-1, 1, 1, 1)
-
+    lats = dataset.lat 
+    lons = dataset.lon
     # Indices to test
-    test_indices = [12, 124, 656, 845, 850, 12450, 24000]
+    test_indices = [4700, 5125, 5756]
 
     # Choose plotting mode: 'per_step' or 'per_channel'
     plot_mode = 'per_channel'  # or 'per_step'
+    lat_i=56
+    lon_i=138
+    field_size=768
 
+    lats = lats[lat_i:lat_i + field_size]
+    lons = lons[lon_i:lon_i + field_size]
     for t_i in test_indices:
         # Retrieve data from dataset
-        x, t, inv, sza = dataset.get_data(year=2021, t_i=t_i, lat_i=56, lon_i=138)
+        
+        x, t, inv, sza = dataset.get_data(year=2021, t_i=t_i, lat_i=lat_i, lon_i=lon_i)
         # x shape: (C, T, H, W)
         # We'll split them: input is first 2, output is next 8
         # user had x[:,:in_steps], x[:, in_steps:in_steps+n_forecast_steps]
@@ -310,11 +352,11 @@ if __name__ == "__main__":
         # Now plot
         if plot_mode == 'per_step':
             plot_results_per_step(
-                y_obs_np, forecasts, t_list, channel_names, out_dir, stds
+                y_obs_np, forecasts, t_list, channel_names, out_dir, stds, lats, lons
             )
         elif plot_mode == 'per_channel':
             plot_results_per_channel(
-                y_obs_np, forecasts, t_list, channel_names, out_dir
+                y_obs_np, forecasts, t_list, channel_names, out_dir, lats, lons
             )
 
     print("All plots done!")

@@ -47,6 +47,8 @@ def parse_args():
                         help="Longitude index to extract.")
     parser.add_argument("--n_samples", type=int, default=400,
                         help="Number of samples to test.")
+    parser.add_argument("--year", type=int, default=2020,
+                        help="Data Year.")
 
     args = parser.parse_args()
     return args
@@ -76,15 +78,20 @@ def test():
     lat_i = args.lat_i
     lon_i = args.lon_i
     n_samples = args.n_samples
+    year = args.year
+    if year <= 2020:
+        name = '16b_virtual'
+        folder_name = "validation"
+    else:
+        name = '32b_virtual'
+        folder_name = "test"
 
     # Prepare dataset
     dataset = DistributedDataset(
         data_path='/capstor/scratch/cscs/acarpent/SEVIRI',
         invariants_path='/capstor/scratch/cscs/acarpent/SEVIRI/invariants',
-        # name='16b_virtual',
-        name='32b_virtual',
-        # years=[2020],
-        years=[2021],
+        name=name,
+        years=[year],
         input_len=in_steps + n_forecast_steps,
         output_len=None,
         channels=np.arange(11),
@@ -147,6 +154,7 @@ def test():
             # low_thresholds = means - stds / 2
 
             # Evaluate each chosen sample
+            flops = True
             for idx in indices:
                 print(f"Processing dataset index: {idx}")
                 year, t_i = dataset.indices[idx]
@@ -178,6 +186,15 @@ def test():
                     y_pred_[0,8,sza_mask[0,0]<0] = torch.nan
                     print("Inference time (sec):", time.time() - start_time)
 
+                    if flops:
+                        flops = FlopCountAnalysis(nowcaster, (x_in, inv, n_forecast_steps))
+                        print("FLOP Count Table:")
+                        print(flop_count_table(flops))
+
+                        # Compute total GFLOPs for the traced pass.
+                        total_gflops = flops.total() / 1e9
+                        print(f"Total GFLOPs (traced pass): {total_gflops:.2f} GFLOPs")
+                        flops = False
                 
                 
                 # Remove batch dim => [11, n_forecast_steps, H, W]
@@ -299,7 +316,7 @@ def test():
             # Save file (include field size, lat_i, lon_i in name)
             out_file = (
                 # f"/capstor/scratch/cscs/acarpent/validation_results/"
-                f"/capstor/scratch/cscs/acarpent/test_results/"
+                f"/capstor/scratch/cscs/acarpent/{folder_name}_results/"
                 f"{model_name}_{epoch}_results_{subset_idx}"
                 f"_val_fs{field_size}_lat{lat_i}_lon{lon_i}.pkl"
             )
