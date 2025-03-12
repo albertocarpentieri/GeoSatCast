@@ -560,22 +560,22 @@ if __name__ == "__main__":
 
     pkl_files = [
         [
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_0_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_1_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_2_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_2_results_3_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_0_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_1_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_2_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_0_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_1_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_2_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_1_results_3_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_0_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_1_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_2_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_1_results_3_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_3_val_fs768_lat56_lon138.pkl",
         ]
     ]
 
@@ -592,6 +592,6 @@ if __name__ == "__main__":
         model_pkl_paths=pkl_files,
         model_names=model_names,
         epochs=None,
-        plot_save_dir=os.path.join(path, "unat-vs-predrnn-vs-afnonatcast-256-plots"),
-        table_save_dir=os.path.join(path, "unat-vs-predrnn-vs-afnonatcast-256-plots")
+        plot_save_dir=os.path.join(path, "unat-f-vs-predrnn-f-afnonatcast-f-768-plots"),
+        table_save_dir=os.path.join(path, "unat-f-vs-predrnn-f-afnonatcast-f-768-tables")
     )

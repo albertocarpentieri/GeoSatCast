@@ -7,7 +7,7 @@ import time
 
 from geosatcast.models.autoencoder import VAE, Encoder, Decoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
-from geosatcast.train.distribute_training import load_nowcaster, load_predrnn
+from geosatcast.train.distribute_training import load_nowcaster, load_predrnn, load_unatcast
 from geosatcast.data.distributed_dataset import DistributedDataset
 from geosatcast.models.tvl1 import tvl1_forecast
 
@@ -35,6 +35,8 @@ def load_models(paths, device="cuda"):
     for name, path in paths.items():
         if "PREDRNN" in name.upper():
             models[name] = load_predrnn(path).to(device)
+        elif "UNAT" in name.upper():
+            models[name] = load_unatcast(path).to(device)
         else:
             models[name] = load_nowcaster(path).to(device)
         print(f"Loaded {name}, #Params: {count_parameters(models[name])}")
@@ -243,13 +245,14 @@ def plot_results_per_channel(y, forecasts, t, channel_names, out_dir, lats, lons
 # --------------------------------------------------
 if __name__ == "__main__":
     device = "cuda"
-    out_dir = "/capstor/scratch/cscs/acarpent/test_results/test_forecasts"
+    out_dir = "/capstor/scratch/cscs/acarpent/validation_results/forecasts"
     ensure_dir(out_dir)
 
     # Setup model paths
     model_paths = {
-        "AFNONATCast - small": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13.pt",
-        "AFNONATCast - large": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14.pt",
+        # "AFNONATCast - small": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13.pt",
+        "UNATCast": "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_18.pt",
+        "AFNONATCast": "/capstor/scratch/cscs/acarpent/Checkpoints/AFNONATCast/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2/AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14.pt",
         "PredRNN ++": "/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/predrnn-inv-s2-fd_5-nh_64-v1-finetuned/predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45.pt"
     }
 
@@ -277,11 +280,14 @@ if __name__ == "__main__":
     # Prepare dataset
     in_steps = 2
     n_forecast_steps = 16
+    year = 2020
     dataset = DistributedDataset(
         data_path='/capstor/scratch/cscs/acarpent/SEVIRI',
         invariants_path='/capstor/scratch/cscs/acarpent/SEVIRI/invariants',
-        name='32b_virtual',
-        years=[2021],
+        # name='32b_virtual',
+        name='16b_virtual',
+        years=[year],
+        # years=[2021],
         input_len=in_steps + n_forecast_steps,
         output_len=None,
         channels=np.arange(11),
@@ -324,7 +330,7 @@ if __name__ == "__main__":
     for t_i in test_indices:
         # Retrieve data from dataset
         
-        x, t, inv, sza = dataset.get_data(year=2021, t_i=t_i, lat_i=lat_i, lon_i=lon_i)
+        x, t, inv, sza = dataset.get_data(year=year, t_i=t_i, lat_i=lat_i, lon_i=lon_i)
         # x shape: (C, T, H, W)
         # We'll split them: input is first 2, output is next 8
         # user had x[:,:in_steps], x[:, in_steps:in_steps+n_forecast_steps]

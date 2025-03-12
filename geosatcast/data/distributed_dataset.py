@@ -54,9 +54,11 @@ class DistributedDataset(Dataset):
         rank=1,
         mask_sza=True,
         dtype=32,
+        add_latlon=False,
         ):
         
         self.data_path = data_path
+        self.data_paths = {year: os.path.join(self.data_path, f"{year}_{name}.h5") for year in years}
         self.years = years
         self.output_len = output_len if output_len else 0
         self.input_len = input_len
@@ -79,8 +81,15 @@ class DistributedDataset(Dataset):
 
         lwmask = xr.open_dataset(os.path.join(invariants_path, "lwmask.nc"))["LWMASK"].values
         lwmask[lwmask==3] = 0
-        self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(self.torch_dtype)
-        self.data_paths = {year: os.path.join(self.data_path, f"{year}_{name}.h5") for year in years}
+        self.get_latlon()
+        if add_latlon:
+            latgrid, longrid = np.meshgrid(self.lon * np.pi / 180, self.lat * np.pi / 180)
+            self.inv = torch.from_numpy(np.stack((dem, lwmask, latgrid, longrid))).type(self.torch_dtype)
+        else:
+            self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(self.torch_dtype)
+        if rank == 0:
+            print("invariants shape", self.inv.shape)
+        
         
         self.data_len = {}
         self.timestamps = {}
@@ -89,7 +98,7 @@ class DistributedDataset(Dataset):
                 self.timestamps[year] = f["time"][:]
                 self.data_len[year] = f["time"].shape[0]
         self.length = length
-        self.get_latlon()
+        
         self.generate_global_indices()
         self.validation = validation
         self.rank = rank
@@ -100,7 +109,7 @@ class DistributedDataset(Dataset):
             self.max_shape = h["fields"].shape[1:3]
             self.lon = h["longitude"][:]
             self.lat = h["latitude"][:]
-        # self.latlon_grid = np.stack(np.meshgrid(self.lon, self.lat))
+        
     
     def generate_global_indices(self):
         # Precompute all valid (year, t_i, lat_i, lon_i) combinations
@@ -142,7 +151,7 @@ class DistributedDataset(Dataset):
         inv = self.inv[:, None, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
         t = torch.from_numpy(t).type(torch.float32)[None, ..., None, None]
-        x = torch.from_numpy(x).type(self.torch_dtype)
+        x = torch.from_numpy(x)
         
         x = x.permute(3, 0, 1, 2).contiguous()
         x, sza = x[:-1], x[-1:]
@@ -253,5 +262,58 @@ class WorkerDistributedSampler(Sampler):
 
 
 if __name__ == "__main__":
-    pass
+    data_path = "/capstor/scratch/cscs/acarpent/SEVIRI/"
+    invariants_path = "/capstor/scratch/cscs/acarpent/SEVIRI/invariants/"
+    dataset = DistributedDataset(
+        data_path=data_path,
+        invariants_path=invariants_path,
+        name="16b_virtual",
+        years=[2017],
+        input_len=3,
+        output_len=None,
+        field_size=768,
+        length=None,
+        load_full=True,
+        add_latlon=True,
+        mask_sza=True,
+    )
+
+    stds = dataset.stds.numpy().reshape(-1, 1, 1, 1)
+    means = dataset.means.numpy().reshape(-1, 1, 1, 1)
+    lats = dataset.lat 
+    lons = dataset.lon
+    # Indices to test
+    idx = [4700, 5125, 5756]
+
+    # Choose plotting mode: 'per_step' or 'per_channel'
+    plot_mode = 'per_channel'  # or 'per_step'
+    lat_i=56
+    lon_i=138
+    field_size=768
+    t_i = 4700
+
+    lats = lats[lat_i:lat_i + field_size]
+    lons = lons[lon_i:lon_i + field_size]
+
+    x, t, inv, sza = dataset.get_data(year=2017, t_i=t_i, lat_i=lat_i, lon_i=lon_i)
+
+    print(inv.shape)
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(1, 6, sharex=True, sharey=True, constrained_layout=True, figsize=(16,3))
+    ax[0].imshow(inv[0,0])
+    ax[1].imshow(inv[1,0])
+    img = ax[2].imshow(inv[2,0])
+    plt.colorbar(img, ax=ax[2])
+    img = ax[3].imshow(inv[3,0])
+    plt.colorbar(img, ax=ax[3])
+    img = ax[4].imshow(inv[4,0])
+    plt.colorbar(img, ax=ax[4])
+    img = ax[5].imshow(inv[5,0])
+    plt.colorbar(img, ax=ax[5])
+
+    fig.savefig("/capstor/scratch/cscs/acarpent/invariants.png")
+
+
     

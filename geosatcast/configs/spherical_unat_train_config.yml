@@ -1,0 +1,68 @@
+ID: "S_UNATCast-small-ks5-nb1-L1" 
+Experiment: "S_UNATCast-small-ks5-nb1-L1" 
+
+seed: 0
+Dataset:
+  data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
+  invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
+  input_seq_len: 3
+  num_workers: 16
+  prefetch_factor: 16
+  train_length: 16000
+  val_length: 1600
+  field_size: 128
+  train_years: [2017, 2018, 2019]
+  val_years: [2020]
+  batch_size: 16
+  seed: 0
+  load_full: True
+  dtype: 16
+  add_latlon: True
+
+Model_Type: "S_UNAT"
+
+Model:
+  in_steps: 2
+  in_channels: 14
+  out_channels: 11
+  down_channels: [192]
+  down_strides: [[2,1,1]]
+  down_block_depths: [1]
+  down_kernel_sizes: [[5,5]]
+  up_channels: []
+  up_strides: []
+  up_block_depths: []
+  up_kernel_sizes: []
+  skip_type: "layer_scale"
+  skip_down_levels: []
+  skip_up_levels: []
+  mlp_ratio: 4
+  num_blocks: 1
+  layer_scale: 0
+  final_conv: True
+  use_rope: True
+
+Checkpoint:
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast-small/"
+  resume_path:
+  finetune_path: 
+
+Loss:
+  Backprop: "L1"
+  Monitor: "L1"
+
+Trainer:
+  n_steps: 1
+  lr: 0.0005
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/UNATCast-small/'
+  max_epochs: 100
+  gradient_clip: .5
+  warmup_steps: 2000
+  use_cosine: True
+  start_cosine_epoch: 10
+  T_max: 30
+  eta_min: 0.0001
+  use_reduce_on_plateau: True
+  opt_patience: 3
+  dtype: 32
+  

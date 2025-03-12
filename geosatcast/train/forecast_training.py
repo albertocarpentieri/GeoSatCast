@@ -26,6 +26,7 @@ from geosatcast.models.nowcast import (
     Nowcaster,
 )
 from geosatcast.models.UNAT import UNAT
+from geosatcast.models.S_UNAT import S_UNAT
 from geosatcast.models.predrnn import PredRNN_v2
 
 from distribute_training import (
@@ -140,7 +141,7 @@ def compute_loss(
     Splits the input into x and y based on in_steps and forecast steps.
     """
     in_steps = model.module.in_steps  # DDP wrapper, so access via model.module
-    x, t, inv, sza = batch
+    x, _, inv, sza = batch
 
     # Slice the data accordingly
     sza = sza[:, :, :in_steps + n_forecast_steps - 1]
@@ -219,8 +220,8 @@ def train(
         dtype = torch.float32 
     elif config_dtype == 16:
         dtype = torch.bfloat16
-    # else:
-    #     dtype = torch.bfloat16
+    else:
+        dtype = torch.bfloat16
 
     # Start training
     for epoch in range(start_epoch, max_epochs):
@@ -261,8 +262,6 @@ def train(
                 optimizer.zero_grad()
                 continue
 
-            # if rank == 0:
-            #     logger.info(f"Batch {num_batches}: Grad norm: {grad_norm:.4f}")
 
             # Gradient clipping if requested
             if config["Trainer"].get("gradient_clip", None) is not None:
@@ -271,9 +270,7 @@ def train(
                     config["Trainer"]["gradient_clip"],
                     error_if_nonfinite=False
                 )
-                # clipped_grad_norm = compute_grad_norm(model)
-                # if rank == 0:
-                #     logger.info(f"Batch {num_batches}: Clipped Grad norm: {clipped_grad_norm:.4f}")
+                
 
             # Optimizer step
             scaler.step(optimizer)
@@ -296,9 +293,11 @@ def train(
                 if num_batches % 50 == 0:
                     logger.info(
                         f"Epoch {epoch}, Step {num_batches}: "
-                        f"MAE {mae.item():.6f}, MSE {mse.item():.6f}"
+                        f"MAE {mae.item():.6f}, MSE {mse.item():.6f} "
+                        f"grad_norm={grad_norm:.3f}"
                     )
-                if writer is not None and num_batches % 10 == 0:
+                   
+                if writer is not None and num_batches % 50 == 0:
                     writer.add_scalar("Train_minibatch/MAE", mae.item(), global_step)
                     writer.add_scalar("Train_minibatch/MSE", mse.item(), global_step)
                     # log_gradients(model, writer, global_step)
@@ -374,6 +373,7 @@ def train(
                 writer.add_scalar("Train/LR", final_lr, epoch)
 
         # Clear GPU cache
+        dist.barrier()
         torch.cuda.empty_cache()
 
 # ------------------------------------------------------------------------
@@ -434,6 +434,8 @@ def main() -> None:
         logger.info(f"AFNONAT mode: {latent_model.mode}")
     elif model_type == "UNAT":
         model = UNAT(**config["Model"])
+    elif model_type == "S_UNAT":
+        model = S_UNAT(**config["Model"])
     elif model_type == "Dummy":
         latent_model = DummyLatent()
     elif model_type == "PredRNN_v2":
@@ -505,21 +507,21 @@ def main() -> None:
             logger=logger,
             rank=rank
         )
-
-    finetune_path = config["Checkpoint"].get("finetune_path", None)
-    scaler = torch.amp.GradScaler()  # create a scaler for AMP
-    if finetune_path and os.path.isfile(finetune_path):
-        start_epoch = load_checkpoint(
-            model=model,
-            optimizer=None,
-            warmup_scheduler=None,
-            cosine_scheduler=None,
-            scheduler=None,
-            scaler=None,
-            checkpoint_path=finetune_path,
-            logger=logger,
-            rank=rank
-        )
+    else:
+        finetune_path = config["Checkpoint"].get("finetune_path", None)
+        scaler = torch.amp.GradScaler()  # create a scaler for AMP
+        if finetune_path and os.path.isfile(finetune_path):
+            start_epoch = load_checkpoint(
+                model=model,
+                optimizer=None,
+                warmup_scheduler=None,
+                cosine_scheduler=None,
+                scheduler=None,
+                scaler=None,
+                checkpoint_path=finetune_path,
+                logger=logger,
+                rank=rank
+            )
 
     # ----------------------------------------------------------------
     # Start Training

@@ -72,7 +72,8 @@ def get_dataloader(
     seed=0,
     load_full=False,
     mask_sza=True,
-    dtype=16
+    dtype=16,
+    add_latlon=False,
     ):
 
     # Get the current GPU and process information
@@ -95,6 +96,7 @@ def get_dataloader(
         rank=local_rank+1,
         mask_sza=mask_sza,
         dtype=dtype,
+        add_latlon=add_latlon
         )
     
     if seed == "rank":

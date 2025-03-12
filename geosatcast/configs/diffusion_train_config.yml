@@ -22,7 +22,7 @@ Model:
   in_steps: 2
   timesteps: 200
   schedule: 'cosine'
-  UNAT_path: '/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_5.pt'
+  UNAT_path: '/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned/UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_7.pt'
 
 CondEncoder:
   levels: [0,1]
@@ -63,15 +63,15 @@ Loss:
 
 Trainer:
   n_steps: 6
-  lr: 0.0001
+  lr: 0.000075
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/Diffusion/'
   max_epochs: 100
   gradient_clip: .5
-  warmup_steps: 4000
+  warmup_steps: 8000
   use_cosine: True
-  start_cosine_epoch: 10
+  start_cosine_epoch: 15
   T_max: 30
-  eta_min: 0.00005
+  eta_min: 0.00001
   use_reduce_on_plateau: True
   opt_patience: 3
   dtype: 16b

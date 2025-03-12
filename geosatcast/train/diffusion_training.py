@@ -290,7 +290,7 @@ def train(
                         f"Epoch {epoch}, Step {batch_idx}: "
                         f"MSE {loss.item():.6f}, grad_norm={grad_norm:.3f}"
                     )
-                if writer is not None and batch_idx % 10 == 0:
+                if writer is not None and batch_idx % 50 == 0:
                     writer.add_scalar("Train_minibatch/MSE", loss.item(), global_step)
                     # log_gradients(model, writer, global_step)  # if you want frequent gradient histograms
 
@@ -439,6 +439,11 @@ def main():
     denoiser = ViDiffUNAT(**config["Denoiser"])
     model = VideoDiffusionModel(denoiser, condencoder, **config["Model"])
     model.to(f"cuda:{local_rank}")
+    if rank == 0:
+        logger.info(denoiser)
+        logger.info(f"Denoiser parameters: {count_parameters(denoiser)}")
+        logger.info(f"Model parameters: {count_parameters(model)}")
+    
     model = DDP(model, device_ids=[local_rank])
 
     # ----------------------------------------------------------------
@@ -475,7 +480,7 @@ def main():
     checkpoint_path = config["Checkpoint"].get("resume_path", None)
     finetune_path = config["Checkpoint"].get("finetune_path", None)
     start_epoch = 0
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
     if checkpoint_path and os.path.isfile(checkpoint_path):
         start_epoch = load_checkpoint(
             model=model,

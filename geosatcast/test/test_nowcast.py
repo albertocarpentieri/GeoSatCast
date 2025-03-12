@@ -126,7 +126,7 @@ def test():
             elif "unat" in model_name.lower():
                 nowcaster = load_unatcast(
                     f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
-                    in_steps=in_steps
+                    in_steps=in_steps,
                 ).to(device)
             else:
                 nowcaster = load_nowcaster(
