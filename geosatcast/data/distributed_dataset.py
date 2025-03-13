@@ -83,10 +83,12 @@ class DistributedDataset(Dataset):
         lwmask[lwmask==3] = 0
         self.get_latlon()
         if add_latlon:
-            latgrid, longrid = np.meshgrid(self.lon * np.pi / 180, self.lat * np.pi / 180)
-            self.inv = torch.from_numpy(np.stack((dem, lwmask, latgrid, longrid))).type(self.torch_dtype)
+            longrid, latgrid = np.meshgrid(self.lon, self.lat)
+            self.latlongrid = torch.from_numpy(np.stack((latgrid * np.pi / 180, longrid * np.pi / 180), axis=-1).astype(np.float32)).type(self.torch_dtype)
         else:
-            self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(self.torch_dtype)
+            self.latlongrid = None
+        
+        self.inv = torch.from_numpy(np.stack((dem, lwmask)).astype(np.float32)).type(self.torch_dtype)
         if rank == 0:
             print("invariants shape", self.inv.shape)
         
@@ -150,6 +152,7 @@ class DistributedDataset(Dataset):
 
         inv = self.inv[:, None, lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size]
         
+        
         t = torch.from_numpy(t).type(torch.float32)[None, ..., None, None]
         x = torch.from_numpy(x)
         
@@ -158,7 +161,12 @@ class DistributedDataset(Dataset):
         if self.mask_sza:
             x[[0,7,8]] = x[[0,7,8]] * (sza > - 0.07)
         x = (x - self.means) / self.stds
-        return x, t, inv, sza
+        
+        if self.latlongrid:
+            latlongrid = self.latlongrid[lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size, :]
+            return x, t, inv, sza, latlongrid
+        else:
+            return x, t, inv, sza
     
     def __getitem__(self, idx):
         year, t_i = self.indices[idx]

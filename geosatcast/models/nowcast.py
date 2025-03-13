@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from geosatcast.utils import avg_pool_nd, conv_nd
-from geosatcast.blocks.NAT import NATBlock2D, NATBlock3D
+from geosatcast.blocks.NAT import NATBlock2D
 from geosatcast.blocks.AFNO import AFNOBlock2D, AdaFNOBlock2D
 from geosatcast.blocks.ResBlock import ResBlock3D
 

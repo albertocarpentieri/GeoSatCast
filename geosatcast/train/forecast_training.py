@@ -26,7 +26,6 @@ from geosatcast.models.nowcast import (
     Nowcaster,
 )
 from geosatcast.models.UNAT import UNAT
-from geosatcast.models.S_UNAT import S_UNAT
 from geosatcast.models.predrnn import PredRNN_v2
 
 from distribute_training import (
@@ -141,27 +140,32 @@ def compute_loss(
     Splits the input into x and y based on in_steps and forecast steps.
     """
     in_steps = model.module.in_steps  # DDP wrapper, so access via model.module
-    x, _, inv, sza = batch
+    if len(batch) == 4:
+        x, _, inv, sza = batch
+        grid = None
+    elif len(batch) == 5:
+        x, _, inv, sza, grid = batch
 
     # Slice the data accordingly
     sza = sza[:, :, :in_steps + n_forecast_steps - 1]
     x, y = x[:, :, :in_steps], x[:, :, in_steps: in_steps + n_forecast_steps]
 
-    if per_ch:
-        x = x.to(device, non_blocking=True).float()
-        inv = inv.to(device, non_blocking=True).float()
-        sza = sza.to(device, non_blocking=True).float()
-    else:
-        x = x.to(device, non_blocking=True).float()
-        inv = inv.to(device, non_blocking=True).float()
-        sza = sza.to(device, non_blocking=True).float()
+    
+    x = x.to(device, non_blocking=True).float()
+    inv = inv.to(device, non_blocking=True).float()
+    sza = sza.to(device, non_blocking=True).float()
+    if grid is not None:
+        grid = grid.to(device, non_blocking=True).float()
 
     y = y.to(device, non_blocking=True).detach().float()
     # Merge 'inv' and 'sza' along channel dimension
     inv = torch.cat((inv.expand(*inv.shape[:2], *sza.shape[2:]), sza), dim=1)
 
     # Forward
-    yhat = model(x, inv, n_steps=n_forecast_steps)
+    if grid is not None:
+        yhat = model(x, inv, grid=grid, n_steps=n_forecast_steps)
+    else:
+        yhat = model(x, inv, n_steps=n_forecast_steps)
     res = (y - yhat).abs()
     mae = res.mean()
     mse = (res ** 2).mean()
@@ -434,8 +438,6 @@ def main() -> None:
         logger.info(f"AFNONAT mode: {latent_model.mode}")
     elif model_type == "UNAT":
         model = UNAT(**config["Model"])
-    elif model_type == "S_UNAT":
-        model = S_UNAT(**config["Model"])
     elif model_type == "Dummy":
         latent_model = DummyLatent()
     elif model_type == "PredRNN_v2":

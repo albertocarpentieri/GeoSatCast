@@ -5,19 +5,21 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import math
 from typing import List, Union
+import re
 
+# Original unit names and associated measures.
 NON_HRV_BANDS = [
-    "IR_016",
-    "IR_039",
-    "IR_087",
-    "IR_097",
-    "IR_108",
-    "IR_120",
-    "IR_134",
-    "VIS006",
-    "VIS008",
-    "WV_062",
-    "WV_073",
+    "IR 1.6",
+    "IR 3.9",
+    "IR 8.7",
+    "IR 9.7",
+    "IR 10.8",
+    "IR 12.0",
+    "IR 13.4",
+    "VIS 0.06",
+    "VIS 0.08",
+    "IR 6.2",
+    "IR 7.3",
 ]
 
 MEASURES = [
@@ -34,7 +36,47 @@ MEASURES = [
     "K",
 ]
 
+# Helper function to extract the wavelength (or unit number) as a float.
+def extract_wavelength(ch: str) -> float:
+    """
+    Convert a channel/unit string to a numeric value representing the wavelength.
+    For IR channels like "IR_016", we assume the number represents 1.6 (i.e. divide by 10).
+    For VIS channels like "VIS006", we assume the number represents 0.06 (i.e. divide by 100).
+    For WV channels like "WV_062", we assume the number represents 6.2 (i.e. divide by 10).
+    """
+    if ch.startswith("IR"):
+        # Remove "IR_" if present; e.g. "IR_016" -> "016"
+        if "_" in ch:
+            num_str = ch.split("_")[1]
+        else:
+            num_str = ch[2:]
+        return float(num_str) / 10.0
+    elif ch.startswith("VIS"):
+        # Remove "VIS"; e.g. "VIS006" -> "006"
+        num_str = ch[3:]
+        return float(num_str) / 100.0
+    elif ch.startswith("WV"):
+        if "_" in ch:
+            num_str = ch.split("_")[1]
+        else:
+            num_str = ch[2:]
+        return float(num_str) / 10.0
+    else:
+        # Fallback: use first found number
+        numbers = re.findall(r"\d+", ch)
+        return float(numbers[0]) if numbers else 0.0
 
+# Create a mapping for the original (unsorted) order.
+channel_to_idx_unsorted = {name: i for i, name in enumerate(NON_HRV_BANDS)}
+
+# Compute sorted channel order based on the extracted wavelength.
+sorted_channels = sorted(NON_HRV_BANDS, key=lambda ch: extract_wavelength(ch))
+# Reorder the MEASURES list accordingly.
+sorted_measures = [MEASURES[channel_to_idx_unsorted[ch]] for ch in sorted_channels]
+
+##############################################
+# PARTIAL RESULTS AND AGGREGATION FUNCTIONS
+##############################################
 def load_partial_results(pkl_path: str):
     """
     Load a single partial .pkl file from nowcast_test.py, which contains:
@@ -52,7 +94,6 @@ def load_partial_results(pkl_path: str):
         data = pkl.load(f)
     return data
 
-
 def merge_model_partials(partial_paths: List[str]):
     """
     Merges multiple partial .pkl files for a single model into a single dict:
@@ -64,10 +105,6 @@ def merge_model_partials(partial_paths: List[str]):
            "rmse_map": ...
         }
       }
-
-    Steps:
-      - Combine 'sample_metrics' by simple dictionary update (keys are init_times).
-      - Accumulate partial sums in 'pixel_metrics', then compute final maps.
     """
     sum_diff_total = None
     sum_abs_diff_total = None
@@ -96,8 +133,7 @@ def merge_model_partials(partial_paths: List[str]):
             sum_sq_diff_total += pix["sum_sq_diff"]
             count_valid_total += pix["count_valid"]
 
-    # Compute final mean_error, MAE, RMSE maps
-    # shape: (channels, forecast_steps, H, W)
+    # Compute final mean_error, MAE, RMSE maps (shape: (channels, forecast_steps, H, W))
     mean_error_map = np.divide(
         sum_diff_total,
         count_valid_total,
@@ -128,17 +164,9 @@ def merge_model_partials(partial_paths: List[str]):
     }
     return result
 
-
 def aggregate_sample_metrics(sample_metrics_dict):
     """
-    Takes merged sample_metrics dict:
-      {
-         init_time1: { 'csi_above': [[...], ...], 'csi_below': [[...], ...], ...},
-         init_time2: {...},
-         ...
-      }
-    and aggregates each metric across all init_times (samples).
-
+    Aggregates each metric across all init_times (samples).
     Returns a dict with arrays of shape (n_forecast_steps, n_channels) for each metric.
     """
     needed_keys = [
@@ -152,7 +180,6 @@ def aggregate_sample_metrics(sample_metrics_dict):
     if not all_times:
         raise ValueError("No sample metrics found to aggregate.")
 
-    # Inspect first sample to find shapes
     example_entry = sample_metrics_dict[all_times[0]]
     n_forecast_steps = len(example_entry["csi_above"])
     n_channels = len(example_entry["csi_above"][0])
@@ -165,11 +192,9 @@ def aggregate_sample_metrics(sample_metrics_dict):
             arr = np.array(entry[mk])  # shape (n_forecast_steps, n_channels)
             metric_arrays[mk].append(arr)
 
-    # Stack => shape (n_samples, n_forecast_steps, n_channels)
-    # Then average => shape (n_forecast_steps, n_channels)
     aggregated = {}
     for mk in needed_keys:
-        stacked = np.array(metric_arrays[mk])  # (n_samples, n_forecast_steps, n_channels)
+        stacked = np.array(metric_arrays[mk])  # shape (n_samples, n_forecast_steps, n_channels)
         mean_val = np.nanmean(stacked, axis=0)
         aggregated[mk] = mean_val
 
@@ -177,7 +202,9 @@ def aggregate_sample_metrics(sample_metrics_dict):
     aggregated["n_channels"] = n_channels
     return aggregated
 
-
+##############################################
+# MAIN COMPARISON FUNCTION
+##############################################
 def compare_models(
     model_pkl_paths: List[List[str]],
     model_names: List[str],
@@ -186,14 +213,12 @@ def compare_models(
     table_save_dir="./tables"
 ):
     """
-    1) Merge partial files for each model -> single result with sample_metrics + pixel_metrics.
-    2) Aggregate sample_metrics -> produce line plots (one figure per metric) using a custom layout:
-         - 2 rows (3+3) for the first 6 channels: IR_039, IR_087, IR_097, IR_108, IR_120, IR_134
-         - 1 row for: IR_016, VIS006, VIS008
-         - Last row plus legend for: WV_062, WV_073
-       Each row has its own y-limits computed from the data in that row.
-    3) For pixel_metrics (rmse_map, mae_map, mean_error_map), same as before: one figure per metric & channel,
-       arranged in [selected forecast steps] x [models].
+    1) Merge partial files for each model.
+    2) Aggregate sample_metrics and produce line plots using a custom layout.
+       The channels (units) are sorted in increasing wavelength order.
+       The layout is created automatically in a 4x3 grid (last slot reserved for legend).
+    3) For pixel_metrics, produce one figure per metric and channel arranged as [forecast steps] x [models],
+       and the channels are plotted in sorted order.
     """
     os.makedirs(plot_save_dir, exist_ok=True)
     os.makedirs(table_save_dir, exist_ok=True)
@@ -202,42 +227,30 @@ def compare_models(
     if epochs is not None:
         assert len(epochs) == len(model_names), "Mismatch in epochs vs. names"
 
-    # 1) Merge partial .pkl files per model
+    # 1) Merge partial files per model.
     merged_results = []
     aggregated_samples = []
     for i, pkl_list in enumerate(model_pkl_paths):
         print(f"Merging partial files for model: {model_names[i]}")
         merged = merge_model_partials(pkl_list)
         merged_results.append(merged)
-
-        # 2) Aggregate sample-wise metrics
         agg_samples = aggregate_sample_metrics(merged["sample_metrics"])
         aggregated_samples.append(agg_samples)
 
-    # We'll assume all have the same n_forecast_steps, n_channels
     n_forecast_steps = aggregated_samples[0]["n_forecast_steps"]
+    # Use the number of channels from the merged samples.
     n_channels = aggregated_samples[0]["n_channels"]
     lead_times = np.arange(n_forecast_steps)
 
-    # Map from channel name -> index in aggregated arrays
-    channel_to_idx = {name: i for i, name in enumerate(NON_HRV_BANDS)}
-
-    # Custom layout for sample metrics line plots.
-    #  - first 2 rows for these 6 channels:
-    #       IR_039, IR_087, IR_097, IR_108, IR_120, IR_134
-    #    grouped as: row0 -> [IR_039, IR_087, IR_097],
-    #                row1 -> [IR_108, IR_120, IR_134]
-    #  - 3rd row -> [IR_016, VIS006, VIS008]
-    #  - 4th row -> [WV_062, WV_073] + 1 slot for legend
-    channel_groups = [
-        ["IR_039", "IR_087", "IR_097"],   # row0
-        ["IR_108", "IR_120", "IR_134"],   # row1
-        ["IR_016", "VIS006", "VIS008"],   # row2
-        ["WV_062", "WV_073"]             # row3 (plus legend in col2)
-    ]
+    # Create the custom layout for sample metrics plots automatically.
+    # We use the sorted channel order.
+    n_total = len(sorted_channels)  # e.g. 11 channels
     nrows = 4
     ncols = 3
+    # Fill row-by-row; last cell will be left for legend if channels < nrows*ncols.
+    channel_groups = [ sorted_channels[i*ncols:(i+1)*ncols] for i in range(nrows) ]
 
+    # Prepare a pivot table collection for CSV export.
     metrics_info = {
         "csi_above":    {"label": "CSI Above",     "suffix": "csi_above"},
         "csi_below":    {"label": "CSI Below",     "suffix": "csi_below"},
@@ -254,96 +267,71 @@ def compare_models(
     }
 
     # ----------------------------------------------------------------
-    # Plot each metric in the new layout
+    # Plot each sample metric in the new layout.
     # ----------------------------------------------------------------
     for metric_key, info in metrics_info.items():
         metric_label = info["label"]
         file_suffix = info["suffix"]
-
-        # Prepare for CSV pivot
         table_rows = []
-
-        # Initialize figure
         fig, axs = plt.subplots(nrows, ncols, figsize=(4*ncols, 3.5*nrows), sharex=True)
         axs = np.array(axs)
         if axs.ndim == 1:
             axs = axs[np.newaxis, :]
 
-        # ------------------------------------------------------------
-        # 1) Determine row-wise min/max for auto y-lims
-        # ------------------------------------------------------------
+        # Determine y-axis limits for each row based on all models for channels in that row.
         row_ymins = []
         row_ymaxs = []
         for row_idx, ch_list in enumerate(channel_groups):
-            # gather all values for these channels (across all models & leads)
             row_vals = []
             for ch in ch_list:
-                c_idx = channel_to_idx[ch]
+                # Get the original index from the unsorted mapping.
+                orig_idx = channel_to_idx_unsorted[ch]
                 for m_i, agg_dict in enumerate(aggregated_samples):
                     metric_array = agg_dict[metric_key]  # shape (n_forecast_steps, n_channels)
-                    channel_values = metric_array[:, c_idx]  # shape (n_forecast_steps,)
+                    channel_values = metric_array[:, orig_idx]
                     row_vals.append(channel_values)
             if len(row_vals) == 0:
-                # fallback
                 row_ymins.append(0)
                 row_ymaxs.append(1)
             else:
                 row_vals = np.concatenate(row_vals)
                 row_min = np.nanmin(row_vals)
                 row_max = np.nanmax(row_vals)
-                # add a little margin
-                margin = 0.05*(row_max - row_min) if (row_max - row_min) > 0 else 1
+                margin = 0.05 * (row_max - row_min) if (row_max - row_min) > 0 else 1
                 row_ymins.append(row_min - margin)
                 row_ymaxs.append(row_max + margin)
 
-        # ------------------------------------------------------------
-        # 2) Plot each row
-        # ------------------------------------------------------------
+        # Plot each row and each column.
         for row_idx, ch_list in enumerate(channel_groups):
             for col_idx in range(ncols):
                 ax = axs[row_idx, col_idx]
-
-                # if no channel in this column for the row => turn off axis
                 if col_idx >= len(ch_list):
-                    # If this is the last row and the last col => legend
-                    # row_idx=3 => WV_062, WV_073 => col=0,1 => col=2 => legend
-                    if (row_idx == (nrows - 1)) and (col_idx == (ncols - 1)):
-                        ax.axis("off")
-                        continue
-                    else:
-                        ax.axis("off")
-                        continue
-
-                # We have a channel
+                    ax.axis("off")
+                    continue
                 channel_name = ch_list[col_idx]
-                c_idx = channel_to_idx[channel_name]
-
-                # Plot each model's data for this channel
+                orig_idx = channel_to_idx_unsorted[channel_name]
                 for m_i, agg_dict in enumerate(aggregated_samples):
                     model_label = model_names[m_i]
                     epoch_label = str(epochs[m_i]) if epochs else None
                     line_label = f"{model_label} (ep={epoch_label})" if epoch_label else model_label
-
-                    metric_array = agg_dict[metric_key]  # shape (n_forecast_steps, n_channels)
-                    channel_values = metric_array[:, c_idx]
+                    metric_array = agg_dict[metric_key]
+                    channel_values = metric_array[:, orig_idx]
                     ax.plot(lead_times, channel_values,
                             marker="o",
                             label=line_label,
                             markerfacecolor='none')
-
                 ax.set_title(channel_name)
                 ax.set_ylim(row_ymins[row_idx], row_ymaxs[row_idx])
                 if row_idx == (nrows - 1):
                     ax.set_xlabel("Lead Time")
                 if col_idx == 0:
                     ax.set_ylabel(metric_label)
-
-                # Collect data for CSV pivot
+                # Save data for pivot table.
                 for m_i, agg_dict in enumerate(aggregated_samples):
                     model_label = model_names[m_i]
                     epoch_label = str(epochs[m_i]) if epochs else "-"
                     metric_array = agg_dict[metric_key]
-                    channel_values = metric_array[:, c_idx]
+                    channel_values = metric_array[:, orig_idx]
                     for lt_i in range(n_forecast_steps):
                         table_rows.append({
                             "Metric": metric_label,
@@ -353,18 +341,13 @@ def compare_models(
                             "Lead_Time": lt_i,
                             f"{metric_label}": channel_values[lt_i]
                         })
-
-        # ------------------------------------------------------------
-        # 3) Legend in the last row, last column
-        # ------------------------------------------------------------
+        # Add legend in the last row, last column.
         legend_ax = axs[-1, -1]
-        legend_ax.axis("off")  # blank
-        # get handles/labels from the *first valid subplot*
-        # you can also do it from e.g. axs[0,0] if you prefer
+        legend_ax.axis("off")
         handles, labels = [], []
         for r_idx in range(nrows):
             for c_idx in range(ncols):
-                if c_idx < len(channel_groups[r_idx]):  # a real channel
+                if c_idx < len(channel_groups[r_idx]):
                     h, l = axs[r_idx, c_idx].get_legend_handles_labels()
                     if h and l:
                         handles = h
@@ -374,17 +357,14 @@ def compare_models(
                 break
         legend_ax.legend(handles, labels, loc="center")
 
-        # Final figure touches
-        fig.suptitle(f"{metric_label} vs Lead Time (New Ordering)")
+        fig.suptitle(f"{metric_label} vs Lead Time")
         fig.tight_layout()
-
-        # 4) Save figure
         plot_path = os.path.join(plot_save_dir, f"compare_models_{file_suffix}_custom.png")
         plt.savefig(plot_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"Saved sample-metric plot for {metric_label}: {plot_path}")
 
-        # 5) Save pivot table CSV
+        # Save pivot table CSV.
         df_metric = pd.DataFrame(table_rows)
         pivot_metric = df_metric.pivot_table(
             index="Lead_Time",
@@ -395,9 +375,9 @@ def compare_models(
         pivot_metric.to_csv(csv_path, float_format="%.4f")
         print(f"Saved table for {metric_label}: {csv_path}\n")
 
-    # ---------------------------------------------------------------
-    # 6) Produce pixel-wise maps as before
-    # ---------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # 6) Produce pixel-wise maps as before, now iterating over sorted channels.
+    # ----------------------------------------------------------------
     steps_to_plot = [0, 3, 7, 11, 15]  # pick whichever steps you want
     pixel_metric_keys = [
         ("rmse_map",        "RMSE"),
@@ -406,32 +386,30 @@ def compare_models(
     ]
 
     for (pix_key, pix_label) in pixel_metric_keys:
-        for c in range(n_channels):
-            # We'll build one figure for this metric & channel.
-            # Rows = steps_to_plot, Cols = #models
-            # Each cell => 2D imshow of the pixel map
+        # Loop over sorted channels instead of the original order.
+        for sorted_idx, ch in enumerate(sorted_channels):
+            orig_idx = channel_to_idx_unsorted[ch]
             fig, axs = plt.subplots(len(steps_to_plot), len(model_names),
                                     figsize=(4*len(model_names), 3.2*len(steps_to_plot)),
                                     sharex=True, sharey=True, constrained_layout=True)
 
-            # If we have only 1 row or 1 col, axs might not be a 2D array => unify
+            # Ensure axs is a 2D array.
             if len(steps_to_plot) == 1 and len(model_names) == 1:
                 axs = np.array([[axs]])
             elif len(steps_to_plot) == 1:
-                axs = axs[None, :]  # shape (1, n_models)
+                axs = axs[None, :]
             elif len(model_names) == 1:
-                axs = axs[:, None]  # shape (n_steps, 1)
+                axs = axs[:, None]
 
-            # Collect all data to unify color scale across subplots
+            # Collect values to fix color scale across subplots.
             all_values = []
             for row_i, step in enumerate(steps_to_plot):
                 for col_i, (model_label, merged) in enumerate(zip(model_names, merged_results)):
                     data_map = merged["pixel_metrics"][pix_key]  # shape (n_channels, n_forecast_steps, H, W)
                     if step < data_map.shape[1]:
-                        arr = data_map[c, step]  # shape (H, W)
+                        arr = data_map[orig_idx, step]
                         valid_values = arr[~np.isnan(arr)]
                         all_values.append(valid_values)
-
             if len(all_values) == 0:
                 vmin, vmax = 0, 1
             else:
@@ -448,11 +426,9 @@ def compare_models(
                         ax.set_yticks([])
                         ax.set_title(f"{model_label} - step={step} (No Data)")
                         continue
-
-                    arr = data_map[c, step]  # shape (H, W)
+                    arr = data_map[orig_idx, step]
                     if "mean_error" in pix_key:
                         cmap = "bwr"
-                        # Symmetric color scale for error
                         vmag = max(abs(vmin), abs(vmax))
                         vmin_ = -vmag
                         vmax_ = vmag
@@ -460,28 +436,20 @@ def compare_models(
                         cmap = "turbo"
                         vmin_ = vmin
                         vmax_ = vmax
-
                     im = ax.imshow(arr, origin="upper", cmap=cmap, vmin=vmin_, vmax=vmax_)
                     if row_i == 0:
                         ax.set_title(f"{model_label}\nStep={step}")
                     else:
                         ax.set_title(f"Step={step}")
 
-            # Single colorbar for the entire figure
-            cbar = fig.colorbar(
-                im, ax=axs,
-                location="bottom",
-                orientation="horizontal",
-                fraction=0.02,
-                pad=0.02
-            )
-            cbar.set_label(f"{pix_label} {MEASURES[c]}")
-
-            fig.suptitle(f"{NON_HRV_BANDS[c]}")
-            out_map = os.path.join(
-                plot_save_dir,
-                f"compare_pixel_{pix_key}_{NON_HRV_BANDS[c]}.png"
-            )
+            cbar = fig.colorbar(im, ax=axs,
+                                location="bottom",
+                                orientation="horizontal",
+                                fraction=0.02,
+                                pad=0.02)
+            cbar.set_label(f"{pix_label} {sorted_measures[sorted_idx]}")
+            fig.suptitle(f"{ch}")
+            out_map = os.path.join(plot_save_dir, f"compare_pixel_{pix_key}_{ch}.png")
             plt.savefig(out_map, dpi=150, bbox_inches="tight")
             plt.close(fig)
             print(f"Saved pixel-wise {pix_label} maps: {out_map}")
@@ -498,30 +466,30 @@ if __name__ == "__main__":
     In a real workflow, you might parse arguments to handle multiple .pkl files dynamically.
     """
     # Paths to your .pkl metric files (one per model)
-    # path = "/capstor/scratch/cscs/acarpent/test_results/"
-    path = "/capstor/scratch/cscs/acarpent/validation_results/"
+    path = "/capstor/scratch/cscs/acarpent/test_results/"
+    # path = "/capstor/scratch/cscs/acarpent/validation_results/"
 
 
-    # pkl_files = [
-    #     [
-    #         path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_1_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_2_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_3_val_fs768_lat56_lon138.pkl",
-    #     ],
-    #     [
-    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_1_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_2_val_fs768_lat56_lon138.pkl",
-    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_3_val_fs768_lat56_lon138.pkl",
-    #     ],
-    #     [
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
-    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
-    #     ]
-    # ]
+    pkl_files = [
+        [
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-512-s2-tss-ls_0-fd_2-ks_5-seq-L1-v1-finetuned-2_13_results_3_val_fs768_lat56_lon138.pkl",
+        ],
+        [
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_0_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_1_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_2_val_fs768_lat56_lon138.pkl",
+            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned-2_14_results_3_val_fs768_lat56_lon138.pkl",
+        ],
+        [
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
+            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
+        ]
+    ]
 
     # pkl_files = [
     #     [
@@ -558,26 +526,26 @@ if __name__ == "__main__":
     #     ]
     # ]
 
-    pkl_files = [
-        [
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_0_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_1_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_2_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_3_val_fs768_lat56_lon138.pkl",
-        ],
-        [
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
-            path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
-        ],
-        [
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_0_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_1_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_2_val_fs768_lat56_lon138.pkl",
-            path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_3_val_fs768_lat56_lon138.pkl",
-        ]
-    ]
+    # pkl_files = [
+    #     [
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_40_results_3_val_fs768_lat56_lon138.pkl",
+    #     ],
+    #     [
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"predrnn-inv-s2-fd_5-nh_64-v1-finetuned_45_results_3_val_fs768_lat56_lon138.pkl",
+    #     ],
+    #     [
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_0_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_1_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_2_val_fs768_lat56_lon138.pkl",
+    #         path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_3_val_fs768_lat56_lon138.pkl",
+    #     ]
+    # ]
 
 
 
@@ -592,6 +560,6 @@ if __name__ == "__main__":
         model_pkl_paths=pkl_files,
         model_names=model_names,
         epochs=None,
-        plot_save_dir=os.path.join(path, "unat-f-vs-predrnn-f-afnonatcast-f-768-plots"),
-        table_save_dir=os.path.join(path, "unat-f-vs-predrnn-f-afnonatcast-f-768-tables")
+        plot_save_dir=os.path.join(path, "plots"),
+        table_save_dir=os.path.join(path, "tables")
     )

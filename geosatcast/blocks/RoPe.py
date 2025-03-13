@@ -9,16 +9,13 @@ class Rope2DMixed(nn.Module):
       "Rotary Position Embedding for Vision Transformer" (Heo et al., 2024)
     
     For each head h and each channel t in [0..(d_head//2 - 1)],
-    we learn two parameters: (theta_x[h,t], theta_y[h,t]), so that
-      phase(r,c,t,h) = (r * resolution_y) * theta_x[h,t]
-                     + (c * resolution_x) * theta_y[h,t]
     Then we convert that to cos/sin for an even-odd interleaving in the
     standard RoPE style.
 
     We also add a simple caching mechanism so that if the input shape
     (H,W) doesn't change, we skip recomputing the expansions.
     """
-    def __init__(self, num_heads: int, d_head: int):
+    def __init__(self, num_heads: int, d_head: int, spherical_correction: bool = False, scale: float = 1.0):
         """
         Args:
           num_heads: number of attention heads
@@ -31,28 +28,18 @@ class Rope2DMixed(nn.Module):
         self.num_heads = num_heads
         self.d_head = d_head
         half = d_head // 2
-
-        # Learnable frequencies: shape => [num_heads, half, 2]
-        #   freq[h, t, 0] = theta_x
-        #   freq[h, t, 1] = theta_y
-        # (the paper sometimes uses one param per layer, but we can store them here.)
-        self.freq = nn.Parameter(torch.zeros(num_heads, half, 2))
+        self.freq = nn.Parameter(torch.zeros(1, num_heads, half, 2))
+        self.spherical_correction = spherical_correction
+        self.scale = scale
         # Typical small init, so they can learn the best scale:
         nn.init.normal_(self.freq, mean=0.0, std=0.02)
-
-        # We'll keep a dict for caching the expansions:
-        #   _cache[(H, W, resolution_y, resolution_x)] = (cos_map, sin_map)
-        # Because we might feed different resolutions or shapes. 
-        # cos_map, sin_map => shape [num_heads, half, H, W]
         self._cache: Dict[Tuple[int,int,float,float], Tuple[torch.Tensor,torch.Tensor]] = {}
 
     def forward(
         self,
         q: torch.Tensor,  # [B, heads, H, W, d_head]
         k: torch.Tensor,  # [B, heads, H, W, d_head]
-        H: int,
-        W: int,
-        resolution: Tuple[float, float]
+        coords: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply Mixed-Frequency 2D RoPE to (q, k).
@@ -67,60 +54,28 @@ class Rope2DMixed(nn.Module):
         """
         device = q.device
         dtype = q.dtype
-        B, heads, H_, W_, d = q.shape
-        assert H_ == H and W_ == W
+        B, heads, H, W, d = q.shape
+        
         assert heads == self.num_heads and d == self.d_head
 
-        # 1) Retrieve or build the cos_map, sin_map from cache
-        res_y, res_x = resolution
-        # cache_key = (H, W, float(res_y), float(res_x))
-        # if cache_key in self._cache:
-        #     cos_map, sin_map = self._cache[cache_key]
-        #     # they might be on a different device if we transferred the model
-        #     # so re-locate them if needed:
-        #     if cos_map.device != device:
-        #         cos_map = cos_map.to(device=device, dtype=dtype)
-        #         sin_map = sin_map.to(device=device, dtype=dtype)
-        #         self._cache[cache_key] = (cos_map, sin_map)
-        # else:
-        #     # Build them new
-        #     with torch.no_grad():
-        #         # If we already have cos_map in the cache, skip building it
-        #         # else build it, all in no_grad block:
-        #         cos_map, sin_map = self._build_phase_maps(H, W, resolution)
-        cos_map, sin_map = self._build_phase_maps(H, W, res_y, res_x, device, dtype)
-            # self._cache[cache_key] = (cos_map, sin_map)
-
-        # cos_map, sin_map => [heads, half, H, W]
-        # We'll apply them to the "first half" of q,k channels in the usual
-        # “even-odd” rearrangement:
-        #   x_even' = x_even * cos - x_odd * sin
-        #   x_odd'  = x_odd  * cos + x_even * sin
-        #
-        # So we first split q => q_row = q[..., :half], q_col = q[..., half:]
-        # But for "mixed" approach, we do the standard 1D rope formula on the entire "first half".
-        # Then the second half is unaffected by these angles.  Actually, for "Mixed" from the paper,
-        # we typically apply these expansions across the entire dimension. But the standard approach
-        # is that the freq dimension is half the channels. Let's implement the classic even-odd trick
-        # across the entire d_head dimension.
-
-        # We'll do it all at once by chunking even/odd indices of the last dimension:
-        # shape => [B, heads, H, W, d_head]
+        lat, lon = coords[...,0], coords[...,1]
+        if self.spherical_correction:
+            lon = lon * torch.cos(lat)
+        lat = lat * self.scale 
+        lon = lon * self.scale
+        
+        cos_map, sin_map = self._build_phase_maps(lat, lon, device, dtype)
+        
         x_even_q = q[..., 0::2]
         x_odd_q  = q[..., 1::2]
         x_even_k = k[..., 0::2]
         x_odd_k  = k[..., 1::2]
 
-        # cos_map, sin_map => broadcast to [B, heads, H, W, half]
-        # but we only have shape [heads, half, H, W]. 
-        # We'll reorder them to [heads, H, W, half] so we can broadcast
-        # along the batch dimension easily:
-        cos_map_reshaped = cos_map.permute(0,2,3,1)  # => [heads, H, W, half]
-        sin_map_reshaped = sin_map.permute(0,2,3,1)  # => [heads, H, W, half]
-
-        # expand to [B, heads, H, W, half]
-        cos_map_reshaped = cos_map_reshaped.unsqueeze(0).expand(B, -1, -1, -1, -1)
-        sin_map_reshaped = sin_map_reshaped.unsqueeze(0).expand(B, -1, -1, -1, -1)
+        cos_map_reshaped = cos_map.permute(0,1,3,4,2)  # => [B, heads, H, W, half]
+        sin_map_reshaped = sin_map.permute(0,1,3,4,2)  # => [B, heads, H, W, half]
+        # # expand to [B, heads, H, W, half]
+        # cos_map_reshaped = cos_map_reshaped.unsqueeze(0).expand(B, -1, -1, -1, -1)
+        # sin_map_reshaped = sin_map_reshaped.unsqueeze(0).expand(B, -1, -1, -1, -1)
 
         # Now apply the standard rope formula on pairs (x_even, x_odd):
         x_even_q2 = x_even_q * cos_map_reshaped - x_odd_q * sin_map_reshaped
@@ -137,15 +92,12 @@ class Rope2DMixed(nn.Module):
         q_out[..., 1::2] = x_odd_q2
         k_out[..., 0::2] = x_even_k2
         k_out[..., 1::2] = x_odd_k2
-
         return q_out, k_out
 
     def _build_phase_maps(
         self,
-        H: int,
-        W: int,
-        res_y: float,
-        res_x: float,
+        lat, 
+        lon,
         device: torch.device,
         dtype: torch.dtype
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -155,37 +107,18 @@ class Rope2DMixed(nn.Module):
           phase[h,t,(r,c)] = r*res_y * freq[h,t,0] + c*res_x * freq[h,t,1]
         then cos,sin of that.
         """
-        # shape => [num_heads, half, 2]
+        B, H, W = lat.shape
         freq = self.freq.to(device=device, dtype=dtype)
 
-        # row coords => shape [H], col coords => shape [W]
-        # multiply by resolution
-        rr = torch.arange(H, device=device, dtype=dtype) * res_y  # [H]
-        cc = torch.arange(W, device=device, dtype=dtype) * res_x  # [W]
-
-        # We'll build the expansions as:
-        # phase[h, t, r, c] = rr[r]*freq[h,t,0] + cc[c]*freq[h,t,1]
-        # then we take sin/cos over that 4D array
-        # We'll do it in a broadcast-friendly way.
-
-        # shape => [num_heads, half, H, W]
-        # We'll do a small nested approach for clarity:
-        # We'll do freq[h,t,0] * rr[r], plus freq[h,t,1] * cc[c].
-        # The naive approach is a double for-loop, but let's vectorize:
-        #   freq[h,t,0] => shape [num_heads, half] => we want [num_heads, half, H, W]
-        #   rr[r] => shape [H], cc[c] => shape [W].
-        # We'll expand them carefully.
-        # freq_x = freq[..., 0] => shape [num_heads, half]
-        # freq_y = freq[..., 1] => shape [num_heads, half]
-        freq_x = freq[..., 0].unsqueeze(-1).unsqueeze(-1)  # [num_heads, half, 1, 1]
+        freq_x = freq[..., 0].unsqueeze(-1).unsqueeze(-1)  
         freq_y = freq[..., 1].unsqueeze(-1).unsqueeze(-1)
 
-        rr_2d = rr.view(1,1,H,1)         # => [1,1,H,1]
-        cc_2d = cc.view(1,1,1,W)         # => [1,1,1,W]
+        lon = lon.view(B,1,1,H,W)         
+        lat = lat.view(B,1,1,H,W)         
 
-        phase_x = freq_x * rr_2d         # => [num_heads, half, H, W]
-        phase_y = freq_y * cc_2d         # => [num_heads, half, H, W]
-        phase = phase_x + phase_y        # => [num_heads, half, H, W]
+        phase_x = freq_x * lon         
+        phase_y = freq_y * lat         
+        phase = phase_x + phase_y  # phase mixing
 
         cos_map = torch.cos(phase)
         sin_map = torch.sin(phase)
@@ -220,17 +153,14 @@ class SphericalRoPE(nn.Module):
         self.num_heads = num_heads
         self.d_head = d_head
         self.num_blocks = d_head // 3  # each block has 3 channels
-
-        # Learnable frequencies: shape [num_heads, num_blocks, 2]
-        # freq[..., 0] used for longitude, freq[..., 1] used for latitude.
         self.freq = nn.Parameter(torch.zeros(num_heads, self.num_blocks, 2))
         nn.init.normal_(self.freq, mean=0.0, std=0.02)
 
     def forward(
         self,
-        q: torch.Tensor,   # shape: [B, heads, H, W, d_head]
-        k: torch.Tensor,   # shape: [B, heads, H, W, d_head]
-        pos: torch.Tensor  # shape: [B, H, W, 2] (pos[...,0]=lat, pos[...,1]=lon in radians)
+        q: torch.Tensor,   
+        k: torch.Tensor,   
+        coords: torch.Tensor 
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         device = q.device
         dtype = q.dtype
@@ -238,62 +168,157 @@ class SphericalRoPE(nn.Module):
         assert heads == self.num_heads and d == self.d_head
 
         # Ensure pos is on the right device and dtype. Now pos: [B, H, W, 2]
-        pos = pos.to(device=device, dtype=dtype)
+        coords = coords.to(device=device, dtype=dtype)
         # Extract latitude and longitude from pos:
-        lat = pos[..., 0]  # shape: [B, H, W]
-        lon = pos[..., 1]  # shape: [B, H, W]
+        lat = coords[..., 0]  # shape: [B, H, W]
+        lon = coords[..., 1]  # shape: [B, H, W]
 
         # Expand learned frequencies: shape becomes [heads, num_blocks, 1, 1, 2]
         freq = self.freq.unsqueeze(2).unsqueeze(3)  # [heads, num_blocks, 1, 1, 2]
 
-        # We need to broadcast pos so that we can compute phase for each sample, head, and block.
-        # Expand lat and lon to shape [B, 1, H, W] so they broadcast with freq.
-        lat_exp = lat.unsqueeze(1)  # [B, 1, H, W]
-        lon_exp = lon.unsqueeze(1)  # [B, 1, H, W]
+        lat = lat.unsqueeze(1).unsqueeze(2) * freq[..., 1]  # [B, 1, H, W]
+        lon = lon.unsqueeze(1).unsqueeze(2) * freq[..., 0]  # [B, 1, H, W]
 
-        # Compute phase angles A and B:
-        # A = lon * freq[..., 0]
-        # B = lat * freq[..., 1]
-        # Resulting shape: [B, heads, num_blocks, H, W]
-        A = lon_exp.unsqueeze(2) * freq[..., 0]
-        B = lat_exp.unsqueeze(2) * freq[..., 1]
+        row1 = torch.stack(
+          [
+            torch.cos(lon), 
+            -torch.cos(lat) * torch.sin(lon), 
+            torch.sin(lat) * torch.sin(lon)
+            ], dim=-1)
+        row2 = torch.stack(
+          [
+            torch.sin(lon), 
+            torch.cos(lat) * torch.cos(lon), 
+            -torch.sin(lat) * torch.cos(lon)
+            ], dim=-1)
+        row3 = torch.stack(
+          [torch.zeros_like(lon), 
+          torch.sin(lat), 
+          torch.cos(lat)
+          ], dim=-1)
 
-        # Compute trigonometric functions for rotation matrix elements.
-        r11 = torch.cos(A)                    # [B, heads, num_blocks, H, W]
-        r12 = -torch.cos(B) * torch.sin(A)
-        r13 = torch.sin(B) * torch.sin(A)
-        r21 = torch.sin(A)
-        r22 = torch.cos(B) * torch.cos(A)
-        r23 = -torch.sin(B) * torch.cos(A)
-        r31 = torch.zeros_like(A)
-        r32 = torch.sin(B)
-        r33 = torch.cos(B)
-
-        # Stack rows to form each 3x3 rotation matrix.
-        # Each row: shape [B, heads, num_blocks, H, W, 3]
-        row1 = torch.stack([r11, r12, r13], dim=-1)
-        row2 = torch.stack([r21, r22, r23], dim=-1)
-        row3 = torch.stack([r31, r32, r33], dim=-1)
         # Final rotation matrices: shape [B, heads, num_blocks, H, W, 3, 3]
         rot_matrices = torch.stack([row1, row2, row3], dim=-2)
 
-        # Reshape q and k into blocks of 3 channels.
-        # From [B, heads, H, W, d_head] to [B, heads, H, W, num_blocks, 3]
-        q_blocks = q.view(B, heads, H, W, self.num_blocks, 3)
-        k_blocks = k.view(B, heads, H, W, self.num_blocks, 3)
+        q = q.view(B, heads, H, W, self.num_blocks, 3)
+        k = k.view(B, heads, H, W, self.num_blocks, 3)
 
-        # Apply the rotation matrices to each block.
-        # We perform a batch matrix multiplication on the last two dims.
-        # q_blocks.unsqueeze(-2): shape [B, heads, H, W, num_blocks, 1, 3]
-        # rot_matrices: shape [B, heads, num_blocks, H, W, 3, 3]
-        # But note: our rot_matrices is currently ordered as [B, heads, num_blocks, H, W, 3, 3].
-        # We need to align the H, W and num_blocks dims. Let's permute rot_matrices to [B, heads, H, W, num_blocks, 3, 3].
         rot = rot_matrices.permute(0, 1, 3, 4, 2, 5, 6)
-        # Now rot: [B, heads, H, W, num_blocks, 3, 3]
-        q_rot = torch.matmul(q_blocks.unsqueeze(-2), rot).squeeze(-2)
-        k_rot = torch.matmul(k_blocks.unsqueeze(-2), rot).squeeze(-2)
+
+        q = torch.matmul(q.unsqueeze(-2), rot).squeeze(-2)
+        k = torch.matmul(k.unsqueeze(-2), rot).squeeze(-2)
 
         # Reshape back to original shape [B, heads, H, W, d_head]
-        q_out = q_rot.view(B, heads, H, W, d)
-        k_out = k_rot.view(B, heads, H, W, d)
+        q = q.view(B, heads, H, W, d)
+        k = k.view(B, heads, H, W, d)
+        return q, k
+
+class TemporalRoPE(nn.Module):
+    """
+    Implements a simple 1D RoPE for temporal positions.
+    Assumes the time dimension is treated independently.
+    """
+    def __init__(self, d_model: int):
+        super().__init__()
+        if d_model % 2 != 0:
+            raise ValueError("d_model for temporal RoPE must be even.")
+        self.d_model = d_model
+        half = d_model // 2
+        # Learnable frequencies for time dimension: shape [half]
+        self.freq = nn.Parameter(torch.zeros(half))
+        nn.init.normal_(self.freq, mean=0.0, std=0.02)
+    
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        t: [B, T] tensor of time positions (e.g. in seconds or radians for cyclic time)
+        Returns a positional embedding of shape [B, T, d_model]
+        """
+        B, T = t.shape
+        # Expand time positions: [B, T, 1]
+        t_exp = t.unsqueeze(-1)  # [B, T, 1]
+        # Compute phase: [B, T, half]
+        phase = t_exp * self.freq.unsqueeze(0).unsqueeze(0)  # broadcasting
+        cos_phase = torch.cos(phase)  # [B, T, half]
+        sin_phase = torch.sin(phase)  # [B, T, half]
+        # Interleave to form a d_model vector per time step:
+        # This mimics the standard RoPE even-odd interleaving.
+        emb = torch.zeros(B, T, self.d_model, device=t.device, dtype=t.dtype)
+        emb[..., 0::2] = cos_phase
+        emb[..., 1::2] = sin_phase
+        return emb
+
+class SpatioTemporalRoPE(nn.Module):
+    """
+    Factorized Spatiotemporal RoPE.
+    Applies Spherical RoPE for spatial dimensions (H, W) and a separate temporal RoPE
+    for the time dimension. The final q and k embeddings are adjusted by the sum of the
+    two positional encodings.
+    
+    Expects:
+      - q, k: [B, T, heads, H, W, d_head]
+      - spatial_pos: [B, H, W, 2] (lat, lon in radians)
+      - time_pos: [B, T] (time positions, e.g. seconds or normalized phase)
+    """
+    def __init__(self, num_heads: int, d_head: int, d_time: Optional[int] = None):
+        super().__init__()
+        # For spatial RoPE, d_head must be a multiple of 3.
+        if d_head % 3 != 0:
+            raise ValueError("For Spherical RoPE, d_head must be a multiple of 3.")
+        self.spatial_rope = SphericalRoPE(num_heads, d_head)
+        # For temporal RoPE, we can choose to use the same d_head or a smaller one.
+        # Here, we choose d_time equal to d_head for simplicity (you can adjust as needed).
+        if d_time is None:
+            d_time = d_head
+        if d_time % 2 != 0:
+            raise ValueError("d_time for Temporal RoPE must be even.")
+        self.temporal_rope = TemporalRoPE(d_time)
+        # Project temporal encoding to d_head dimension if necessary.
+        if d_time != d_head:
+            self.temp_proj = nn.Linear(d_time, d_head)
+        else:
+            self.temp_proj = nn.Identity()
+    
+    def forward(
+        self,
+        q: torch.Tensor,  # [B, T, heads, H, W, d_head]
+        k: torch.Tensor,  # [B, T, heads, H, W, d_head]
+        spatial_pos: torch.Tensor,  # [B, H, W, 2]
+        time_pos: torch.Tensor      # [B, T]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, T, heads, H, W, d_head = q.shape
+        
+        # Compute spatial encoding per sample (applied independently per time slice)
+        # We reshape time and batch to combine them: [B*T, heads, H, W, d_head]
+        q_reshaped = q.view(B*T, heads, H, W, d_head)
+        k_reshaped = k.view(B*T, heads, H, W, d_head)
+        # For spatial positions, we assume the same grid per sample in the batch.
+        spatial_encoded_q, spatial_encoded_k = self.spatial_rope(q_reshaped, k_reshaped, spatial_pos.shape[1], spatial_pos.shape[2], 
+                                                                (1.0, 1.0))  # adjust resolution as needed
+        # Reshape back: [B, T, heads, H, W, d_head]
+        spatial_encoded_q = spatial_encoded_q.view(B, T, heads, H, W, d_head)
+        spatial_encoded_k = spatial_encoded_k.view(B, T, heads, H, W, d_head)
+        
+        # Compute temporal encoding: [B, T, d_time]
+        temp_enc = self.temporal_rope(time_pos)  # [B, T, d_time]
+        temp_enc = self.temp_proj(temp_enc)      # [B, T, d_head]
+        # Expand temporal encoding to shape [B, T, 1, 1, 1, d_head] to broadcast over heads, H, W.
+        temp_enc = temp_enc.view(B, T, 1, 1, 1, d_head)
+        
+        # Combine: here we add the spatial and temporal positional adjustments.
+        # You could also choose a different combination (like concatenation and a linear projection)
+        q_out = spatial_encoded_q + temp_enc
+        k_out = spatial_encoded_k + temp_enc
         return q_out, k_out
+
+
+if __name__ == "__main__":
+    lon = torch.arange(-5, 5, 0.05)
+    lat = torch.arange(-5, 5, 0.05)
+    coords = torch.stack(torch.meshgrid(lat, lon), dim=-1)
+    q = k = torch.ones((1,1,200,200,6))
+    print(lon.shape, lat.shape)
+
+    rope = Rope2DMixed(1,6)
+
+    q, k = rope(q, k, coords)
+    print(q, k )

@@ -9,17 +9,17 @@ import matplotlib.pyplot as plt
 
 # Provided channel names.
 NON_HRV_BANDS = [
-    "IR_016",
-    "IR_039",
-    "IR_087",
-    "IR_097",
-    "IR_108",
-    "IR_120",
-    "IR_134",
-    "VIS006",
-    "VIS008",
-    "WV_062",
-    "WV_073",
+    "IR 1.6",
+    "IR 3.9",
+    "IR 8.7",
+    "IR 9.7",
+    "IR 10.8",
+    "IR 12.0",
+    "IR 13.4",
+    "VIS 0.06",
+    "VIS 0.08",
+    "IR 6.2",
+    "IR 7.3",
 ]
 # Mapping from channel index (as string) to channel name.
 channel_names = {str(i): NON_HRV_BANDS[i] for i in range(len(NON_HRV_BANDS))}
@@ -170,10 +170,13 @@ def aggregate_results(samples):
 def plot_temporal_autocorrelation_all_channels(temporal_data, out_dir, channel_names):
     """
     Plot temporal autocorrelation curves (mean only) for all channels in one plot.
+    The channels are ordered by wavelength extracted from the channel name.
     """
     plt.figure(figsize=(8,6))
     cmap = plt.get_cmap("tab20")
-    for idx, ch in enumerate(sorted(temporal_data.keys(), key=lambda x: int(x))):
+    # Sort channel keys based on the wavelength (numeric part) in the channel name.
+    sorted_keys = sorted(temporal_data.keys(), key=lambda x: float(channel_names.get(x, "0").split()[1]))
+    for idx, ch in enumerate(sorted_keys):
         ch_data = temporal_data[ch]
         lags = sorted(ch_data.keys(), key=lambda x: float(x))
         x = np.array([float(lag) for lag in lags])
@@ -194,12 +197,15 @@ def plot_spatial_autocorrelation_both_directions(spatial_data, out_dir, channel_
     """
     Plot spatial autocorrelation curves (mean only, without error bounds) for both horizontal and vertical directions
     in a single figure with two subplots.
+    The channels are ordered by wavelength extracted from the channel name.
     """
     cmap = plt.get_cmap("tab20")
     fig, axs = plt.subplots(1, 2, figsize=(14,6), sharey=True)
     directions = ["horizontal", "vertical"]
+    # Sort channel keys by wavelength.
+    sorted_keys = sorted(spatial_data.keys(), key=lambda x: float(channel_names.get(x, "0").split()[1]))
     for ax, direction in zip(axs, directions):
-        for idx, ch in enumerate(sorted(spatial_data.keys(), key=lambda x: int(x))):
+        for idx, ch in enumerate(sorted_keys):
             ch_data = spatial_data[ch]
             filtered = {k: v for k, v in ch_data.items() if k.startswith(direction)}
             if not filtered:
@@ -215,7 +221,6 @@ def plot_spatial_autocorrelation_both_directions(spatial_data, out_dir, channel_
             color = cmap(idx)
             ax.plot(x, avg, marker="o", color=color, label=channel_names.get(ch, f"Ch {ch}"))
         ax.set_xlabel("Shift (pixels)")
-        
         ax.set_title(f"{direction.capitalize()} Shifts")
         ax.legend()
     axs[0].set_ylabel("Spatial Autocorrelation")
@@ -229,28 +234,32 @@ def plot_intra_corr_matrix_aggregated(intra_matrix_agg, out_dir, channel_names):
     """
     Plot the aggregated intra-channel correlation matrix (mean only) as a heatmap,
     with the numeric correlation values annotated in each cell.
+    The channels are ordered by wavelength extracted from the channel name.
     """
     if intra_matrix_agg is None:
         print("No aggregated intra-channel matrix available.")
         return
     # Use only the mean matrix.
     M = intra_matrix_agg["average"]
-    N = M.shape[0]
+    # Determine sorted order of channel indices based on wavelength.
+    sorted_keys = sorted(channel_names.keys(), key=lambda x: float(channel_names.get(x, "0").split()[1]))
+    sorted_idx = [int(key) for key in sorted_keys]
+    M_sorted = M[np.ix_(sorted_idx, sorted_idx)]
     plt.figure(figsize=(8,6))
-    im = plt.imshow(M, vmin=-1, vmax=1, cmap='RdBu_r')
-    plt.colorbar(im, fraction=0.046, pad=0.04)
-    plt.title("Aggregated Intra-Channel Correlation Matrix (Mean)")
+    im = plt.imshow(M_sorted, vmin=-1, vmax=1, cmap='RdBu_r')
+    cbar = plt.colorbar(im, fraction=0.046, pad=0.04)
+    cbar.set_label("Pearson Correlation")
+    plt.title("Average Intra-Channel Correlation")
     plt.xlabel("Channel")
     plt.ylabel("Channel")
-    # Set tick labels using channel names.
-    ticks = np.arange(N)
-    tick_labels = [channel_names.get(str(i), f"Ch {i}") for i in range(N)]
+    ticks = np.arange(len(sorted_idx))
+    tick_labels = [channel_names.get(key, f"Ch {key}") for key in sorted_keys]
     plt.xticks(ticks, tick_labels, rotation=45, ha="right")
     plt.yticks(ticks, tick_labels)
     # Annotate each cell with the numeric value.
-    for i in range(N):
-        for j in range(N):
-            text = f"{M[i, j]:.2f}"
+    for i in range(len(sorted_idx)):
+        for j in range(len(sorted_idx)):
+            text = f"{M_sorted[i, j]:.2f}"
             plt.text(j, i, text, ha="center", va="center", color="black", fontsize=8)
     out_path = os.path.join(out_dir, "intra_channel_corr_matrix_mean.png")
     plt.tight_layout()
@@ -264,6 +273,7 @@ def plot_intra_corr_pairs_matrix_binned(intra_pair_data, bin_type, out_dir, chan
     For each pair (i, j) with i < j, bin the correlation values (using the timestamps from the tuple)
     by time-of-day ("hour") or by month ("day") and plot the binned average and quantiles.
     For i >= j, leave the subplot blank.
+    The channels are ordered by wavelength extracted from the channel name.
     """
     if bin_type == "hour":
         bins = np.linspace(0, 24, 25)
@@ -274,7 +284,9 @@ def plot_intra_corr_pairs_matrix_binned(intra_pair_data, bin_type, out_dir, chan
     else:
         return
 
-    N = len(channel_names)
+    # Sorted channel keys by wavelength.
+    sorted_keys = sorted(channel_names.keys(), key=lambda x: float(channel_names.get(x, "0").split()[1]))
+    N = len(sorted_keys)
     fig, axs = plt.subplots(N, N, figsize=(2.5*N, 2.5*N), squeeze=False)
     for i in range(N):
         for j in range(N):
@@ -282,7 +294,8 @@ def plot_intra_corr_pairs_matrix_binned(intra_pair_data, bin_type, out_dir, chan
             if i >= j:
                 ax.axis("off")
                 continue
-            key = f"{i}_{j}"
+            # Use sorted keys to form the intra-pair key.
+            key = f"{sorted_keys[i]}_{sorted_keys[j]}"
             if key not in intra_pair_data:
                 ax.text(0.5, 0.5, "No Data", ha="center", va="center", fontsize=8)
                 ax.axis("off")
@@ -326,7 +339,7 @@ def plot_intra_corr_pairs_matrix_binned(intra_pair_data, bin_type, out_dir, chan
             q75s = np.array([stats[x]["q75"] for x in sorted(stats.keys())])
             ax.plot(xs, avgs, marker="o", markersize=3, linewidth=1)
             ax.fill_between(xs, q25s, q75s, alpha=0.3)
-            ax.set_title(f"{channel_names.get(str(i), 'Ch '+str(i))} vs {channel_names.get(str(j), 'Ch '+str(j))}", fontsize=7)
+            ax.set_title(f"{channel_names[sorted_keys[i]]} vs {channel_names[sorted_keys[j]]}", fontsize=7)
             if i == N-1:
                 ax.set_xlabel(xlabel, fontsize=6)
             else:
@@ -377,7 +390,7 @@ def main():
     plot_temporal_autocorrelation_all_channels(agg["temporal_autocorrelation"], args.out_dir, channel_names)
     # Plot spatial autocorrelation (both directions, in one figure, no error bounds).
     plot_spatial_autocorrelation_both_directions(agg["spatial_autocorrelation"], args.out_dir, channel_names)
-    # Plot the aggregated intra-channel correlation matrix as 3 subplots.
+    # Plot the aggregated intra-channel correlation matrix as a heatmap.
     plot_intra_corr_matrix_aggregated(agg["intra_channel_corr_matrix"], args.out_dir, channel_names)
     # Plot intra-channel pair correlations binned by hour and by day.
     plot_intra_corr_pairs_matrix_binned(agg["intra_channel_pair"], "hour", args.out_dir, channel_names)
