@@ -54,7 +54,7 @@ class DownBlock(nn.Module):
                 kernel_size=stride, 
                 stride=stride, 
                 padding=0,
-                padding_mode="reflect"
+                padding_mode="reflect",
             )
             nn.init.xavier_uniform_(self.downsample.weight)
             nn.init.zeros_(self.downsample.bias)
@@ -163,7 +163,7 @@ class UpBlock(nn.Module):
             if in_ch != out_ch:
                 self.channel_proj = nn.Conv3d(in_ch, out_ch, kernel_size=1)
                 nn.init.xavier_uniform_(self.channel_proj.weight)
-                nn.init.zeros_(self.channel_proj.bias)
+                # nn.init.zeros_(self.channel_proj.bias)
             else:
                 self.channel_proj = nn.Identity()
             self.scale_factor = stride
@@ -308,6 +308,7 @@ class UNAT(nn.Module):
                 depth=down_block_depths[i],
                 emb_method=emb_method,
                 resolution=resolution,
+                downsample_type=downsample_type[i]
             )
             self.down_blocks.append(down_blk)
             prev_ch = block_out_ch
@@ -334,7 +335,9 @@ class UNAT(nn.Module):
                 skip_type=s,
                 depth=up_block_depths[i],
                 resolution=resolution,
-                emb_method=emb_method
+                emb_method=emb_method,
+                upsample_type=upsample_type[i],
+                interp_mode=interp_mode
             )
             self.up_blocks.append(up_blk)
             in_ch = out_ch
@@ -346,7 +349,7 @@ class UNAT(nn.Module):
                 kernel_size=1
             )
             torch.nn.init.xavier_uniform_(self.final_conv.weight)
-            torch.nn.init.zeros_(self.final_conv.bias)
+            # torch.nn.init.zeros_(self.final_conv.bias)
         else:
             self.final_conv = nn.Identity()
         

@@ -15,7 +15,7 @@ class Rope2DMixed(nn.Module):
     We also add a simple caching mechanism so that if the input shape
     (H,W) doesn't change, we skip recomputing the expansions.
     """
-    def __init__(self, num_heads: int, d_head: int, spherical_correction: bool = False, scale: float = 1.0):
+    def __init__(self, num_heads: int, d_head: int, spherical_correction: bool = False):
         """
         Args:
           num_heads: number of attention heads
@@ -30,7 +30,6 @@ class Rope2DMixed(nn.Module):
         half = d_head // 2
         self.freq = nn.Parameter(torch.zeros(1, num_heads, half, 2))
         self.spherical_correction = spherical_correction
-        self.scale = scale
         # Typical small init, so they can learn the best scale:
         nn.init.normal_(self.freq, mean=0.0, std=0.02)
         self._cache: Dict[Tuple[int,int,float,float], Tuple[torch.Tensor,torch.Tensor]] = {}
@@ -58,11 +57,9 @@ class Rope2DMixed(nn.Module):
         
         assert heads == self.num_heads and d == self.d_head
 
-        lat, lon = coords[...,0], coords[...,1]
+        lat, lon = coords[...,0] * 20, coords[...,1] * 20
         if self.spherical_correction:
-            lon = lon * torch.cos(lat)
-        lat = lat * self.scale 
-        lon = lon * self.scale
+            lon = lon * torch.cos(lat * torch.pi / 180)
         
         cos_map, sin_map = self._build_phase_maps(lat, lon, device, dtype)
         
@@ -86,13 +83,11 @@ class Rope2DMixed(nn.Module):
 
         # Re-interleave them back along last dimension
         # shape => [B, heads, H, W, d_head]
-        q_out = torch.zeros_like(q)
-        k_out = torch.zeros_like(k)
-        q_out[..., 0::2] = x_even_q2
-        q_out[..., 1::2] = x_odd_q2
-        k_out[..., 0::2] = x_even_k2
-        k_out[..., 1::2] = x_odd_k2
-        return q_out, k_out
+        q[..., 0::2] = x_even_q2
+        q[..., 1::2] = x_odd_q2
+        k[..., 0::2] = x_even_k2
+        k[..., 1::2] = x_odd_k2
+        return q, k
 
     def _build_phase_maps(
         self,
@@ -158,57 +153,59 @@ class SphericalRoPE(nn.Module):
 
     def forward(
         self,
-        q: torch.Tensor,   
-        k: torch.Tensor,   
-        coords: torch.Tensor 
+        q: torch.Tensor,   # [B, heads, H, W, d_head]
+        k: torch.Tensor,   # [B, heads, H, W, d_head]
+        coords: torch.Tensor  # [B, H, W, 2] with pos[...,0]=lat, pos[...,1]=lon
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         device = q.device
         dtype = q.dtype
         B, heads, H, W, d = q.shape
         assert heads == self.num_heads and d == self.d_head
 
-        # Ensure pos is on the right device and dtype. Now pos: [B, H, W, 2]
-        coords = coords.to(device=device, dtype=dtype)
-        # Extract latitude and longitude from pos:
-        lat = coords[..., 0]  # shape: [B, H, W]
-        lon = coords[..., 1]  # shape: [B, H, W]
+        # Get lat and lon from coords and expand for broadcasting.
+        # Note: In the original code, lat and lon are scaled by the learned frequencies.
+        lat = coords[..., 0] * 20 # * torch.pi / 180  # [B, H, W]
+        lon = coords[..., 1] * 20 # * torch.pi / 180  # [B, H, W]
+        lat = lat.unsqueeze(1).unsqueeze(2)  # [B, 1, H, W]
+        lon = lon.unsqueeze(1).unsqueeze(2)  # [B, 1, H, W]
 
-        # Expand learned frequencies: shape becomes [heads, num_blocks, 1, 1, 2]
-        freq = self.freq.unsqueeze(2).unsqueeze(3)  # [heads, num_blocks, 1, 1, 2]
+        # freq is [heads, num_blocks, 2]. Extract frequency components.
+        freq = self.freq.to(device=device, dtype=dtype)  # [heads, num_blocks, 2]
+        # Separate frequencies for longitude (A) and latitude (B)
+        freq_lon = freq[..., 0]  # shape: [heads, num_blocks]
+        freq_lat = freq[..., 1]  # shape: [heads, num_blocks]
 
-        lat = lat.unsqueeze(1).unsqueeze(2) * freq[..., 1]  # [B, 1, H, W]
-        lon = lon.unsqueeze(1).unsqueeze(2) * freq[..., 0]  # [B, 1, H, W]
+        # Reshape freq for broadcasting: [1, heads, num_blocks, 1, 1]
+        freq_lon = freq_lon.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        freq_lat = freq_lat.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
 
-        row1 = torch.stack(
-          [
-            torch.cos(lon), 
-            -torch.cos(lat) * torch.sin(lon), 
-            torch.sin(lat) * torch.sin(lon)
-            ], dim=-1)
-        row2 = torch.stack(
-          [
-            torch.sin(lon), 
-            torch.cos(lat) * torch.cos(lon), 
-            -torch.sin(lat) * torch.cos(lon)
-            ], dim=-1)
-        row3 = torch.stack(
-          [torch.zeros_like(lon), 
-          torch.sin(lat), 
-          torch.cos(lat)
-          ], dim=-1)
+        # Compute phase angles.
+        # A = lon * freq_A and B = lat * freq_B
+        lon = lon * freq_lon  # [B, heads, num_blocks, H, W]
+        lat = lat * freq_lat  # [B, heads, num_blocks, H, W]
 
-        # Final rotation matrices: shape [B, heads, num_blocks, H, W, 3, 3]
-        rot_matrices = torch.stack([row1, row2, row3], dim=-2)
+        # Precompute sin and cos for both A and B.
+        cos_lon = torch.cos(lon).permute(0, 1, 3, 4, 2).unsqueeze(-1)
+        sin_lon = torch.sin(lon).permute(0, 1, 3, 4, 2).unsqueeze(-1)
+        cos_lat = torch.cos(lat).permute(0, 1, 3, 4, 2).unsqueeze(-1)
+        sin_lat = torch.sin(lat).permute(0, 1, 3, 4, 2).unsqueeze(-1)
 
-        q = q.view(B, heads, H, W, self.num_blocks, 3)
-        k = k.view(B, heads, H, W, self.num_blocks, 3)
+        # Reshape q and k to separate the 3-channel blocks: [B, heads, H, W, num_blocks, 3]
+        num_blocks = self.num_blocks
+        q = q.view(B, heads, H, W, num_blocks, 3)
+        k = k.view(B, heads, H, W, num_blocks, 3)
 
-        rot = rot_matrices.permute(0, 1, 3, 4, 2, 5, 6)
+        q0 = cos_lon * q[..., 0:1] - cos_lat * sin_lon * q[..., 1:2] + sin_lat * sin_lon * q[..., 2:3]
+        q1 = sin_lon * q[..., 0:1] + cos_lat * cos_lon * q[..., 1:2] - sin_lat * cos_lon * q[..., 2:3]
+        q2 = sin_lat * q[..., 1:2] + cos_lat * q[..., 2:3]
+        q = torch.cat([q0, q1, q2], dim=-1)
 
-        q = torch.matmul(q.unsqueeze(-2), rot).squeeze(-2)
-        k = torch.matmul(k.unsqueeze(-2), rot).squeeze(-2)
+        k0 = cos_lon * k[..., 0:1] - cos_lat * sin_lon * k[..., 1:2] + sin_lat * sin_lon * k[..., 2:3]
+        k1 = sin_lon * k[..., 0:1] + cos_lat * cos_lon * k[..., 1:2] - sin_lat * cos_lon * k[..., 2:3]
+        k2 = sin_lat * k[..., 1:2] + cos_lat * k[..., 2:3]
+        k = torch.cat([k0, k1, k2], dim=-1)
 
-        # Reshape back to original shape [B, heads, H, W, d_head]
+        # Reshape back to the original shape [B, heads, H, W, d_head]
         q = q.view(B, heads, H, W, d)
         k = k.view(B, heads, H, W, d)
         return q, k

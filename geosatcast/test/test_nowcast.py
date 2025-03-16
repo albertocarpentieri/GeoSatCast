@@ -5,6 +5,7 @@ import pickle as pkl
 import datetime
 import argparse
 import time
+import os
 
 from metrics import (
     critical_success_index_torch,
@@ -34,6 +35,8 @@ def parse_args():
                         help="Comma-separated list of model names.")
     parser.add_argument("--epochs", type=str, default="99",
                         help="Comma-separated list of epochs.")
+    parser.add_argument("--ckpt_paths", type=str, default="/capstor/scratch/cscs/acarpent/Checkpoints",
+                        help="Comma-separated list of ckpt paths.")
 
     parser.add_argument("--in_steps", type=int, default=2,
                         help="Number of input timesteps.")
@@ -71,6 +74,7 @@ def test():
     # Parse model names and epochs
     model_names = args.model_names.split(",")
     epochs = [int(e) for e in args.epochs.split(",")]
+    ckpt_paths = args.ckpt_paths.split(",")
 
     in_steps = args.in_steps
     field_size = args.field_size
@@ -86,51 +90,55 @@ def test():
         name = '32b_virtual'
         folder_name = "test"
 
-    # Prepare dataset
-    dataset = DistributedDataset(
-        data_path='/capstor/scratch/cscs/acarpent/SEVIRI',
-        invariants_path='/capstor/scratch/cscs/acarpent/SEVIRI/invariants',
-        name=name,
-        years=[year],
-        input_len=in_steps + n_forecast_steps,
-        output_len=None,
-        channels=np.arange(11),
-        field_size=field_size,
-        length=None,
-        validation=True,
-        rank=0
-    )
-
-    # Random sampling
-    np.random.seed(0)
-    full_range = np.arange(len(dataset.indices))
-    np.random.shuffle(full_range)
-    full_range = full_range[:n_samples]
-
-    chunk_size = int(np.ceil(n_samples / total_subsets))
-    start = subset_idx * chunk_size
-    end = min(start + chunk_size, n_samples)
-    indices = full_range[start:end]
-
+    add_latlon = False
     # Loop over multiple models/epochs
-    for model_name in model_names:
+    for model_name, ckpt_path in zip(model_names, ckpt_paths):
+        if "unat" in model_name.lower():
+            add_latlon = True
+        # Prepare dataset
+        dataset = DistributedDataset(
+            data_path='/capstor/scratch/cscs/acarpent/SEVIRI',
+            invariants_path='/capstor/scratch/cscs/acarpent/SEVIRI/invariants',
+            name=name,
+            years=[year],
+            input_len=in_steps + n_forecast_steps,
+            output_len=None,
+            channels=np.arange(11),
+            field_size=field_size,
+            length=None,
+            validation=True,
+            rank=0,
+            add_latlon=add_latlon,
+        )
+
+        # Random sampling
+        np.random.seed(0)
+        full_range = np.arange(len(dataset.indices))
+        np.random.shuffle(full_range)
+        full_range = full_range[:n_samples]
+
+        chunk_size = int(np.ceil(n_samples / total_subsets))
+        start = subset_idx * chunk_size
+        end = min(start + chunk_size, n_samples)
+        indices = full_range[start:end]
+        
         for epoch in epochs:
             print(f"\n=== Testing Model: {model_name}, Epoch: {epoch} ===")
 
             # Load model
             if "predrnn" in model_name.lower():
                 nowcaster = load_predrnn(
-                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    os.path.join(ckpt_path, f"{model_name}/{model_name}_{epoch}.pt"),
                     in_steps=in_steps
                 ).to(device)
             elif "unat" in model_name.lower():
                 nowcaster = load_unatcast(
-                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    os.path.join(ckpt_path, f"{model_name}/{model_name}_{epoch}.pt"), 
                     in_steps=in_steps,
                 ).to(device)
             else:
                 nowcaster = load_nowcaster(
-                    f"/capstor/scratch/cscs/acarpent/Checkpoints/{model_name.split('-')[0]}/{model_name}/{model_name}_{epoch}.pt",
+                    os.path.join(ckpt_path, f"{model_name}/{model_name}_{epoch}.pt"),
                     in_steps=in_steps
                 ).to(device)
 
@@ -159,15 +167,23 @@ def test():
                 print(f"Processing dataset index: {idx}")
                 year, t_i = dataset.indices[idx]
 
-                x, t, inv, sza = dataset.get_data(
+                batch = dataset.get_data(
                     year=year, t_i=t_i,
                     lat_i=lat_i, lon_i=lon_i
                 )
-                t = t[0, :, 0, 0].numpy().astype(int)
 
+                if len(batch) == 4:
+                    x, t, inv, sza = batch
+                    grid = None 
+                elif len(batch) == 5:
+                    x, t, inv, sza, grid = batch
+
+                t = t[0, :, 0, 0].numpy().astype(int)
                 x = x[None].to(device)   # [1, 11, time, H, W]
                 inv = inv[None].to(device)
                 sza = sza[None].to(device)
+                if grid is not None:
+                    grid = grid[None].to(device)
 
                 x_in = x[:, :, :in_steps]
                 y_true_ = x[:, :, in_steps:in_steps + n_forecast_steps]
@@ -180,14 +196,20 @@ def test():
                 # Inference
                 with torch.no_grad():
                     start_time = time.time()
-                    y_pred_ = nowcaster(x_in, inv, n_steps=n_forecast_steps)
+                    if grid is not None:
+                        y_pred_ = nowcaster(x_in, inv, grid, n_steps=n_forecast_steps)
+                    else:
+                        y_pred_ = nowcaster(x_in, inv, n_steps=n_forecast_steps)
                     y_pred_[0,0,sza_mask[0,0]<0] = torch.nan
                     y_pred_[0,7,sza_mask[0,0]<0] = torch.nan
                     y_pred_[0,8,sza_mask[0,0]<0] = torch.nan
                     print("Inference time (sec):", time.time() - start_time)
 
                     if flops:
-                        flops = FlopCountAnalysis(nowcaster, (x_in, inv, n_forecast_steps))
+                        if grid is not None:
+                            flops = FlopCountAnalysis(nowcaster, (x_in, inv, grid, 1))
+                        else:
+                            flops = FlopCountAnalysis(nowcaster, (x_in, inv, 1))
                         print("FLOP Count Table:")
                         print(flop_count_table(flops))
 

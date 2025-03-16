@@ -84,7 +84,7 @@ class DistributedDataset(Dataset):
         self.get_latlon()
         if add_latlon:
             longrid, latgrid = np.meshgrid(self.lon, self.lat)
-            self.latlongrid = torch.from_numpy(np.stack((latgrid * np.pi / 180, longrid * np.pi / 180), axis=-1).astype(np.float32)).type(self.torch_dtype)
+            self.latlongrid = torch.from_numpy(np.stack((latgrid, longrid), axis=-1).astype(np.float32)).type(self.torch_dtype)
         else:
             self.latlongrid = None
         
@@ -162,7 +162,7 @@ class DistributedDataset(Dataset):
             x[[0,7,8]] = x[[0,7,8]] * (sza > - 0.07)
         x = (x - self.means) / self.stds
         
-        if self.latlongrid:
+        if self.latlongrid is not None:
             latlongrid = self.latlongrid[lat_i:lat_i+self.field_size, lon_i:lon_i+self.field_size, :]
             return x, t, inv, sza, latlongrid
         else:
@@ -266,7 +266,7 @@ class WorkerDistributedSampler(Sampler):
         """
         Sets the epoch for the sampler. Useful for shuffling in distributed training.
         """
-        self.seed = self.seed + epoch
+        self.seed = epoch
 
 
 if __name__ == "__main__":

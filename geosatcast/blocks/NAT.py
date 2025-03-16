@@ -17,6 +17,38 @@ from natten.functional import na2d_qk, na2d_av, na3d_qk, na3d_av
 # 2) Nat2D: self/cross + optional distance-based bias
 # ----------------------------------------------------------------------------
 
+class LearnedAbsPosConcatEmbed(nn.Module):
+    """
+    Computes an absolute positional embedding from 2D coordinates.
+    For each head, it learns a frequency vector and computes sine and cosine
+    features from the coordinates. The four resulting features are concatenated and
+    then passed through a linear layer to produce an embedding of dimension pos_dim.
+    The output shape is [B, num_heads, H, W, pos_dim] so that it can be concatenated
+    to the query and key.
+    """
+    def __init__(self, num_heads: int, pos_dim: int):
+        super().__init__()
+        self.num_heads = num_heads
+        self.pos_dim = pos_dim
+        self.freq_x = nn.Parameter(torch.randn(num_heads, pos_dim))
+        self.freq_y = nn.Parameter(torch.randn(num_heads, pos_dim))
+    
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            coords: Tensor of shape [B, H, W, 2], where the last dim are (x, y) coordinates.
+        Returns:
+            pos_emb: Tensor of shape [B, num_heads, H, W, pos_dim]
+        """
+        B, H, W, _ = coords.shape
+        coords = coords.unsqueeze(3).expand(B, H, W, self.num_heads, 2)
+        x = coords[..., 0].unsqueeze(-1) * self.freq_x 
+        y = coords[..., 1].unsqueeze(-1) * self.freq_y      
+        pos_emb = torch.cat([torch.sin(x), torch.cos(x), torch.sin(y), torch.cos(y)], dim=-1)
+        # pos_emb = self.linear(pos_features)
+        pos_emb = pos_emb.permute(0, 3, 1, 2, 4)
+        return pos_emb
+
 class NonlinearPosBiasMLP(nn.Module):
     """
     Maps an (offset_y, offset_x) to a single scalar bias:
@@ -37,6 +69,40 @@ class NonlinearPosBiasMLP(nn.Module):
         flat_out = self.mlp(flat_inp)
         return flat_out.view(H, W)
 
+
+class SinusoidalAbsPosEmbed(nn.Module):
+    """
+    Given a 2D coordinate (x, y), produces a sinusoidal positional embedding.
+    The embedding is computed as the concatenation of:
+      sin(x * freq_x), cos(x * freq_x), sin(y * freq_y), cos(y * freq_y)
+    where freq_x and freq_y are learnable frequency parameters.
+    For an output embedding of dimension `dim`, we require that dim % 4 == 0.
+    """
+    def __init__(self, dim: int):
+        super().__init__()
+        if dim % 4 != 0:
+            raise ValueError("dim must be divisible by 4 for SinusoidalAbsPosEmbed")
+        self.dim = dim
+        self.freq_x = nn.Parameter(torch.randn(dim // 4))
+        self.freq_y = nn.Parameter(torch.randn(dim // 4))
+    
+    def forward(self, coords: Tensor) -> Tensor:
+        """
+        coords: [B, H, W, 2] tensor where:
+            coords[..., 0] is the x coordinate (distance along East-West),
+            coords[..., 1] is the y coordinate (distance along North-South).
+        Returns:
+            pos_emb: [B, H, W, dim] sinusoidal positional embedding.
+        """
+        # Separate x and y coordinates and unsqueeze for multiplication.
+        x = coords[..., 0].unsqueeze(-1)  
+        y = coords[..., 1].unsqueeze(-1)  
+        sin_x = torch.sin(x * self.freq_x)  
+        cos_x = torch.cos(x * self.freq_x)  
+        sin_y = torch.sin(y * self.freq_y)  
+        cos_y = torch.cos(y * self.freq_y)
+        pos_emb = torch.cat([sin_x, cos_x, sin_y, cos_y], dim=-1)
+        return pos_emb
 
 class Nat2D(nn.Module):
     """
@@ -61,7 +127,7 @@ class Nat2D(nn.Module):
         qk_scale: Optional[float] = None,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
-        emb_method: str = "rope", # from ["rope", "spherical_rope", "rel_dist_bias", "rel_pos_bias", "nonlinear_dist_bias" "none"]
+        emb_method: str = "rope", # from ["rope", "corrected_rope", "spherical_rope", "rel_dist_bias", "rel_pos_bias", "nonlinear_dist_bias" "none"]
         resolution: Tuple[float, float] = [1,1] 
     ):
         super().__init__()
@@ -79,12 +145,20 @@ class Nat2D(nn.Module):
         # QKV for self-attn or QV+K for cross-attn
         if not self.cross:
             self.qkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
+            torch.nn.init.xavier_uniform_(self.qkv.weight)
+            torch.nn.init.zeros_(self.qkv.bias)
         else:
             self.qv = nn.Linear(dim, 2*dim, bias=qv_bias)
             self.k = nn.Linear(dim, dim, bias=k_bias)
+            torch.nn.init.xavier_uniform_(self.qv.weight)
+            torch.nn.init.zeros_(self.qv.bias)
+            torch.nn.init.xavier_uniform_(self.k.weight)
+            torch.nn.init.zeros_(self.k.bias)
 
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
+        torch.nn.init.xavier_uniform_(self.proj.weight)
+        torch.nn.init.zeros_(self.proj.bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
         # relative position bias
@@ -130,13 +204,19 @@ class Nat2D(nn.Module):
             self.nlpe = NonlinearPosBiasMLP(hidden_dim=64)
             self.register_buffer("offset_grid", offset_grid.type(self.nlpe.mlp.fc1.weight.dtype))
         
+        if self.emb_method == "abs_emb":
+            self.abs_embed = SinusoidalAbsPosEmbed(dim)
         
+        # Modified absolute embedding branch:
+        if self.emb_method == "concat_abs_emb":
+            self.abs_embed = LearnedAbsPosConcatEmbed(num_heads=self.num_heads, pos_dim=32)
+
         self.rope = None
         if self.emb_method == "rope":
             self.rope = Rope2DMixed(num_heads, self.head_dim)
         
         if self.emb_method == "corrected_rope":
-            self.rope = Rope2DMixed(num_heads, self.head_dim, spherical_correction=True, scale=10)
+            self.rope = Rope2DMixed(num_heads, self.head_dim, spherical_correction=True)
         
         if self.emb_method == "spherical_rope":
             self.rope = SphericalRoPE(num_heads, self.head_dim)
@@ -154,6 +234,16 @@ class Nat2D(nn.Module):
         if x.dim() != 4:
             raise ValueError("Nat2D expects [B,H,W,C] rank-4 input.")
         B, H, W, C = x.shape
+
+        # Apply absolute sinusoidal positional embedding if requested.
+        if self.emb_method == "abs_emb" and coords is not None:
+            lat = coords[..., 0]  
+            lon = coords[..., 1]
+            pos_emb = self.abs_embed(coords)
+            x = x + pos_emb
+            if self.cross and y is not None:
+                y = y + pos_emb
+
 
         if not self.cross:
             # self-attn
@@ -182,9 +272,15 @@ class Nat2D(nn.Module):
             rpb = self.nlpe(self.offset_grid)
             rpb = rpb.unsqueeze(0).expand(self.num_heads, -1, -1)
         
-        elif self.emb_method == "rope" or self.emb_method == "spherical_rope":
+        elif self.emb_method in ["rope", "corrected_rope", "spherical_rope"]:
             q, k = self.rope(q, k, coords)        
         
+        # For "abs_emb", compute the learned absolute positional embedding and concatenate it to q and k.
+        if self.emb_method == "concat_abs_emb":
+            pos_emb = self.abs_embed(coords)  
+            q = torch.cat([q, pos_emb], dim=-1)
+            k = torch.cat([k, pos_emb], dim=-1)
+
         attn = na2d_qk(
             q, k,
             kernel_size=self.kernel_size,
@@ -278,18 +374,6 @@ class NATBlock2D(nn.Module):
             emb_method=emb_method,
             resolution=resolution,
         )
-        # weight init
-        if not cross:
-            nn.init.zeros_(self.attn.qkv.bias)
-            nn.init.xavier_uniform_(self.attn.qkv.weight)
-        else:
-            nn.init.zeros_(self.attn.qv.bias)
-            nn.init.zeros_(self.attn.k.bias)
-            nn.init.xavier_uniform_(self.attn.qv.weight)
-            nn.init.xavier_uniform_(self.attn.k.weight)
-        nn.init.zeros_(self.attn.proj.bias)
-        nn.init.xavier_uniform_(self.attn.proj.weight)
-        
 
         self.norm2 = normalization(dim, norm)
         self.mlp = Mlp(
