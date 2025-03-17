@@ -31,7 +31,9 @@ class LearnedAbsPosConcatEmbed(nn.Module):
         self.num_heads = num_heads
         self.pos_dim = pos_dim
         self.freq_x = nn.Parameter(torch.randn(num_heads, pos_dim))
+        trunc_normal_(self.freq_x, std=0.02, mean=0.0, a=-2.0, b=2.0)
         self.freq_y = nn.Parameter(torch.randn(num_heads, pos_dim))
+        trunc_normal_(self.freq_y, std=0.02, mean=0.0, a=-2.0, b=2.0)
     
     def forward(self, coords: torch.Tensor) -> torch.Tensor:
         """
@@ -49,27 +51,6 @@ class LearnedAbsPosConcatEmbed(nn.Module):
         pos_emb = pos_emb.permute(0, 3, 1, 2, 4)
         return pos_emb
 
-class NonlinearPosBiasMLP(nn.Module):
-    """
-    Maps an (offset_y, offset_x) to a single scalar bias:
-        offset: [N, 2] --> [N, 1]
-    where N = (2*kH - 1)*(2*kW - 1).
-    """
-    def __init__(self, hidden_dim=32):
-        super().__init__()
-        self.mlp = Mlp(in_features=2, hidden_features=hidden_dim, out_features=1)
-
-    def forward(self, offset_grid: torch.Tensor) -> torch.Tensor:
-        """
-        offset_grid shape => [H, W, 2]  (H = 2*kH - 1, W = 2*kW - 1)
-        Returns shape => [H, W]
-        """
-        H, W, _ = offset_grid.shape
-        flat_inp = offset_grid.view(-1, 2)
-        flat_out = self.mlp(flat_inp)
-        return flat_out.view(H, W)
-
-
 class SinusoidalAbsPosEmbed(nn.Module):
     """
     Given a 2D coordinate (x, y), produces a sinusoidal positional embedding.
@@ -83,8 +64,10 @@ class SinusoidalAbsPosEmbed(nn.Module):
         if dim % 4 != 0:
             raise ValueError("dim must be divisible by 4 for SinusoidalAbsPosEmbed")
         self.dim = dim
-        self.freq_x = nn.Parameter(torch.randn(dim // 4))
-        self.freq_y = nn.Parameter(torch.randn(dim // 4))
+        self.freq_x = nn.Parameter(torch.zeros(dim // 4))
+        trunc_normal_(self.freq_x, std=0.02, mean=0.0, a=-2.0, b=2.0)
+        self.freq_y = nn.Parameter(torch.zeros(dim // 4))
+        trunc_normal_(self.freq_y, std=0.02, mean=0.0, a=-2.0, b=2.0)
     
     def forward(self, coords: Tensor) -> Tensor:
         """
@@ -194,16 +177,6 @@ class Nat2D(nn.Module):
                 offset[h, 1] = mesh_x
             self.register_buffer("offset", offset)
         
-        if self.emb_method == "nonlinear_dist_bias":
-            kH, kW = self.kernel_size
-            yvals = torch.arange(-kH+1, kH) * self.resolution[0]
-            xvals = torch.arange(-kW+1, kW) * self.resolution[1]
-            grid_y = yvals[:, None].expand(yvals.size(0), xvals.size(0))  # [2*kH-1, 2*kW-1]
-            grid_x = xvals[None, :].expand(yvals.size(0), xvals.size(0))  # same shape
-            offset_grid = torch.stack([grid_y, grid_x], dim=-1)  # [2*kH-1, 2*kW-1, 2]
-            self.nlpe = NonlinearPosBiasMLP(hidden_dim=64)
-            self.register_buffer("offset_grid", offset_grid.type(self.nlpe.mlp.fc1.weight.dtype))
-        
         if self.emb_method == "abs_emb":
             self.abs_embed = SinusoidalAbsPosEmbed(dim)
         
@@ -267,10 +240,6 @@ class Nat2D(nn.Module):
             scale = rpb.view(self.num_heads, 2, 1, 1)  # => [num_heads,2,1,1]
             dist = (self.offset * scale).pow(2).sum(dim=1)  # => [num_heads,H,W]
             rpb = - dist  # negative distance
-
-        elif self.emb_method == "nonlinear_dist_bias":
-            rpb = self.nlpe(self.offset_grid)
-            rpb = rpb.unsqueeze(0).expand(self.num_heads, -1, -1)
         
         elif self.emb_method in ["rope", "corrected_rope", "spherical_rope"]:
             q, k = self.rope(q, k, coords)        
