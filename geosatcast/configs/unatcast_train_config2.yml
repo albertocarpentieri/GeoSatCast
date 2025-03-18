@@ -1,5 +1,5 @@
-ID: "UNATCast-small-ks7-nb1-rope-192-L1" 
-Experiment: "UNATCast-small-ks7-nb1-rope-192-L1" 
+ID: "UNATCast-small-ks13-nb8-spherical_rope-192-L1" 
+Experiment: "UNATCast-small-ks13-nb8-spherical_rope-192-L1" 
 
 seed: 0
 Dataset:
@@ -28,7 +28,7 @@ Model:
   down_channels: [192]
   down_strides: [[2,1,1]]
   down_block_depths: [1]
-  down_kernel_sizes: [[7,7]]
+  down_kernel_sizes: [[13,13]]
   up_channels: []
   up_strides: []
   up_block_depths: []
@@ -37,11 +37,11 @@ Model:
   skip_down_levels: []
   skip_up_levels: []
   mlp_ratio: 4
-  num_blocks: 1
+  num_blocks: 8
   layer_scale: 0
   final_conv: True
   resolution: [1, 1]
-  emb_method: "rope"
+  emb_method: "spherical_rope"
   downsample_type: ["conv"]   
   upsample_type: "transposed"  
   interp_mode: "nearest"

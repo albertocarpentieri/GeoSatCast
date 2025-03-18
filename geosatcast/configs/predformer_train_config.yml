@@ -1,5 +1,5 @@
-ID: 'predrnn-inv-s2-fd_4-nh_64'
-Experiment: 'predrnn-inv-s2-fd_4-nh_64'
+ID: 'predformer-1024-Nds2-h8-hdim128'
+Experiment: 'predformer-1024-Nds2-h8-hdim128'
 
 seed: 0
 Dataset:
@@ -17,17 +17,25 @@ Dataset:
   seed: 0
   load_full: True
 
-Model_Type: PredRNN_v2
+Model_Type: PredFormer
 
 Model:
+  patch_size: 8
+  pre_seq: 2
+  dim: 1024
+  in_channels: 14
+  out_channels: 11
+  heads: 8
+  dim_head: 128
+  dropout: 0.1
+  attn_dropout: 0.1
+  drop_path: 0.25
+  scale_dim: 2
+  Ndepth: 2
   in_steps: 2
-  in_ch: 14
-  out_ch: 11
-  num_hidden: [128, 64, 64, 64]
-  tln: True
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/predrnn/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/predformer/"
   resume_path: 
   finetune_path:
 
@@ -38,12 +46,12 @@ Loss:
 Trainer:
   n_steps: 1
   lr: 0.0005
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/predrnn/'
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/predformer/'
   max_epochs: 100
   gradient_clip: .5
-  warmup_steps: 5000
+  warmup_steps: 10000
   use_cosine: True
-  start_cosine_epoch: 15
+  start_cosine_epoch: 10
   T_max: 30
   eta_min: 0.0001
   use_reduce_on_plateau: True

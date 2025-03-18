@@ -1,5 +1,5 @@
-ID: 'AFNOCast-1024-s2-tss-ls_0-fd_4-L1-v1'
-Experiment: 'AFNOCast-1024-s2-tss-ls_0-fd_4-L1-v1'
+ID: 'AFNOCast-1024-ts-ls_0-fd_12-L1-v1'
+Experiment: 'AFNOCast-1024-ts-ls_0-fd_12-L1-v1'
 
 seed: 0
 Dataset:
@@ -8,12 +8,12 @@ Dataset:
   input_seq_len: 3
   num_workers: 16
   prefetch_factor: 16
-  train_length: 32000
-  val_length: 3200
-  field_size: 256
+  train_length: 16000
+  val_length: 1600
+  field_size: 128
   train_years: [2017, 2018, 2019]
   val_years: [2020]
-  batch_size: 64
+  batch_size: 16
   seed: 0
   load_full: True
 
@@ -25,30 +25,30 @@ Encoder:
   norm:
   min_ch: 
   max_ch: 
-  channels: [128, 256, 512]
-  kernel_sizes: [[2,1,1], [1,3,3], [1,3,3]]
-  resample_factors: [[2,1,1], [1,2,2], [1,2,2]]
+  channels: [128, 1024]
+  kernel_sizes: [[2,1,1], [1,4,4]]
+  resample_factors: [[2,1,1], [1,4,4]]
   init: "xavier"
 
 Decoder:
-  in_dim: 512
+  in_dim: 1024
   out_dim: 11
   levels: 2
   extra_resblock_levels: []
   upsampling_mode: "stride"
   norm:
   min_ch: 128
-  max_ch: 512
-  kernel_size: [1,3,3]
-  resample_factor: [1,2,2]
+  max_ch: 1024
+  kernel_size: [1,4,4]
+  resample_factor: [1,4,4]
   init: "xavier"
 
 Model_Type: "AFNO"
 
 Model:
   in_steps: 2
-  embed_dim: 512
-  forecast_depth: 1
+  embed_dim: 1024
+  forecast_depth: 12
   num_blocks: 1
   mlp_ratio: 4
   norm: 
@@ -56,17 +56,23 @@ Model:
 
 Checkpoint:
   dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/"
-  resume_path: "/capstor/scratch/cscs/acarpent/Checkpoints/AFNOCast/AFNOCast-512-s2-tss-ls_0-fd_1-v2/AFNOCast-512-s2-tss-ls_0-fd_1-v2_19.pt"
+  resume_path: 
 
 Loss:
   Backprop: "L1"
   Monitor: "L1"
 
 Trainer:
-  opt_patience: 3
-  lr: 0.001
+  n_steps: 1
+  lr: 0.0005
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/AFNOCast/'
   max_epochs: 100
-  n_steps: 1
-  gradient_clip: 1
-  warmup_steps: 2000
+  gradient_clip: .5
+  warmup_steps: 5000
+  use_cosine: True
+  start_cosine_epoch: 15
+  T_max: 30
+  eta_min: 0.0001
+  use_reduce_on_plateau: True
+  opt_patience: 3
+  dtype: 32

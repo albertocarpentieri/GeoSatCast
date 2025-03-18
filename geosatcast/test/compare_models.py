@@ -532,10 +532,10 @@ if __name__ == "__main__":
             path+"AFNONATCast-1024-s2-tss-ls_0-fd_8-ks_5-seq-L1-v1-finetuned_35_results_3_val_fs768_lat56_lon138.pkl",
         ],
         [
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_0_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_1_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_2_val_fs768_lat56_lon138.pkl",
-            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1_95_results_3_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_18_results_0_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_18_results_1_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_18_results_2_val_fs768_lat56_lon138.pkl",
+            path+"UNATCast-1024-s2-tss-dd048-ud40-ks5-skip-ls_0-L1-v1-finetuned_18_results_3_val_fs768_lat56_lon138.pkl",
         ],
     ]
 

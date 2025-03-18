@@ -27,6 +27,7 @@ from geosatcast.models.nowcast import (
 )
 from geosatcast.models.UNAT import UNAT
 from geosatcast.models.predrnn import PredRNN_v2
+from geosatcast.models.predformer import PredFormer_Model
 
 from distribute_training import (
     set_global_seed,
@@ -442,6 +443,8 @@ def main() -> None:
         latent_model = DummyLatent()
     elif model_type == "PredRNN_v2":
         model = PredRNN_v2(**config["Model"], in_steps=in_steps)
+    elif model_type == "PredFormer":
+        model = PredFormer_Model(config["Model"], in_steps=in_steps)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 

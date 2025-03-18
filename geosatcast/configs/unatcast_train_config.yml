@@ -1,5 +1,5 @@
-ID: "UNATCast-medium-ks7-nb1-dd4_4-ud4-rpb-192_768-L1" 
-Experiment: "UNATCast-medium-ks7-nb1-dd4_4-ud4-rpb-192_768-L1" 
+ID: "UNATCast-large-ks13-d4-nb8-spherical_rope-384-L1"  
+Experiment: "UNATCast-large-ks13-d4-nb8-spherical_rope-384-L1" 
 
 seed: 0
 Dataset:
@@ -25,29 +25,29 @@ Model:
   in_steps: 2
   in_channels: 14
   out_channels: 11
-  down_channels: [192, 768]
-  down_strides: [[2,1,1], [1,2,2]]
-  down_block_depths: [4,4]
-  down_kernel_sizes: [[7,7], [7,7]]
-  up_channels: [192]
-  up_strides: [[1,2,2]]
-  up_block_depths: [4]
-  up_kernel_sizes: [[7,7]]
+  down_channels: [384]
+  down_strides: [[2,1,1]]
+  down_block_depths: [4]
+  down_kernel_sizes: [[13,13]]
+  up_channels: []
+  up_strides: []
+  up_block_depths: []
+  up_kernel_sizes: []
   skip_type: "layer_scale"
-  skip_down_levels: [0]
-  skip_up_levels: [0]
+  skip_down_levels: []
+  skip_up_levels: []
   mlp_ratio: 4
-  num_blocks: 1
-  layer_scale: 0
+  num_blocks: 8
+  layer_scale: "normal"
   final_conv: True
   resolution: [1, 1]
-  emb_method: "rel_pos_bias"
-  downsample_type: ["conv", "avgpool"]   
+  emb_method: "spherical_rope"
+  downsample_type: ["conv"]   
   upsample_type: "interp"  
   interp_mode: "nearest"
 
 Checkpoint:
-  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast-medium/"
+  dirpath: "/capstor/scratch/cscs/acarpent/Checkpoints/UNATCast-large/"
   resume_path:
   finetune_path: 
 
@@ -57,13 +57,13 @@ Loss:
 
 Trainer:
   n_steps: 1
-  lr: 0.001
-  log_dir: '/capstor/scratch/cscs/acarpent/Logs/UNATCast-medium/'
+  lr: 0.0005
+  log_dir: '/capstor/scratch/cscs/acarpent/Logs/UNATCast-large/'
   max_epochs: 100
-  gradient_clip: 
-  warmup_steps: 2000
+  gradient_clip: .5
+  warmup_steps: 5000
   use_cosine: True
-  start_cosine_epoch: 10
+  start_cosine_epoch: 15
   T_max: 30
   eta_min: 0.0001
   use_reduce_on_plateau: True

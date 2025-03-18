@@ -9,6 +9,7 @@ from geosatcast.models.autoencoder import VAE, Encoder, Decoder, AutoEncoder
 from geosatcast.models.nowcast import AFNOCastLatent, NATCastLatent, AFNONATCastLatent, Nowcaster
 from geosatcast.models.UNAT import UNAT
 from geosatcast.models.predrnn import PredRNN, PredRNN_v2
+from geosatcast.models.predformer import PredFormer_Model
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
@@ -369,6 +370,26 @@ def load_unatcast(ckpt_path, return_config=False, in_steps=2):
 
     model = UNAT(
         **config["Model"],
+        in_steps=in_steps
+    )
+    state_dict = {
+        k.replace("module.", ""): v for k, v in ckpt["model_state_dict"].items()
+    }
+    model.load_state_dict(state_dict)
+    if return_config:
+        return model, config
+    return model
+
+def load_predformer(ckpt_path, return_config=False, in_steps=2):
+    """
+    Loads model, optimizer, and scheduler states from a checkpoint.
+    """
+    
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    config = ckpt["config"]
+
+    model = PredFormer_Model(
+        config["Model"],
         in_steps=in_steps
     )
     state_dict = {

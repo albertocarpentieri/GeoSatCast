@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
+from torch.nn.init import trunc_normal_
 import math 
 
 from geosatcast.utils import avg_pool_nd, conv_nd
@@ -190,9 +191,10 @@ class UpBlock(nn.Module):
 
         if self.skip_type == "layer_scale":
             self.skip_scale = nn.Parameter(
-                torch.rand((1, out_ch, 1, 1, 1)) * 1e-3,
+                torch.rand((1, out_ch, 1, 1, 1)),
                 requires_grad=True
             )
+            trunc_normal_(self.skip_scale, std=0.02, mean=0.0, a=-2.0, b=2.0)
             
 
     def forward(self, x: torch.Tensor, grid: torch.Tensor = None, skip: torch.Tensor = None) -> torch.Tensor:
@@ -424,10 +426,10 @@ if __name__ == "__main__":
         up_block_depths=[4],
         up_kernel_sizes=[(5,5)],  
         norm=None,
-        layer_scale=0.5,
+        layer_scale="normal",
         mlp_ratio=4,
         num_blocks=1,
-        skip_type='add',
+        skip_type='layer_scale',
         skip_down_levels=[0],
         skip_up_levels=[0],
         in_steps=2,

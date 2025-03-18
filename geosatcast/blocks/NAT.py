@@ -357,6 +357,13 @@ class NATBlock2D(nn.Module):
             self.layer_scale = True
             self.gamma1 = nn.Parameter(layer_scale * torch.ones(dim))
             self.gamma2 = nn.Parameter(layer_scale * torch.ones(dim))
+        
+        elif layer_scale == "normal":
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(torch.ones(dim))
+            self.gamma2 = nn.Parameter(torch.ones(dim))
+            trunc_normal_(self.gamma1, std=0.02, mean=0.0, a=-2.0, b=2.0)
+            trunc_normal_(self.gamma2, std=0.02, mean=0.0, a=-2.0, b=2.0)
 
     def forward(
         self, 
