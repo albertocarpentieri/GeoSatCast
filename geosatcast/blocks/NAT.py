@@ -295,6 +295,33 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
 
+class GatedMlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None,
+                 act="gelu", drop=0.0):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, 2 * hidden_features)
+        self.act = activation(act)
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        
+        # Same init as before
+        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.zeros_(self.fc1.bias)
+        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.zeros_(self.fc2.bias)
+        
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x1, x2 = x.chunk(2, dim=-1)
+        x_gated = x1 * self.act(x2)
+        x_gated = self.drop(x_gated)
+        x_out = self.fc2(x_gated)
+        x_out = self.drop(x_out)
+        return x_out
+
 class NATBlock2D(nn.Module):
     """
     Unifies self- and cross-attention in 2D. 
@@ -313,6 +340,7 @@ class NATBlock2D(nn.Module):
         drop=0.0,
         attn_drop=0.0,
         act="gelu",
+        gated=False,
         norm=None,
         layer_scale=None,
         cross=False,
@@ -345,12 +373,20 @@ class NATBlock2D(nn.Module):
         )
 
         self.norm2 = normalization(dim, norm)
-        self.mlp = Mlp(
-            in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
-            act=act,
-            drop=drop,
-        )
+        if gated:
+            self.mlp = GatedMlp(
+                in_features=dim,
+                hidden_features=int(dim * mlp_ratio),
+                act=act,
+                drop=drop,
+            )
+        else:
+            self.mlp = Mlp(
+                in_features=dim,
+                hidden_features=int(dim * mlp_ratio),
+                act=act,
+                drop=drop,
+            )
 
         self.layer_scale = False
         if layer_scale is not None and isinstance(layer_scale, (int, float)):

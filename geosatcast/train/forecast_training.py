@@ -254,6 +254,18 @@ def train(
             loss_to_backprop = mae if config["Loss"]["Backprop"] == "L1" else mse
             scaler.scale(loss_to_backprop).backward()
 
+            # max_grad = 0.0
+            # max_grad_param = None
+
+            # for name, param in model.named_parameters():
+            #     if param.grad is not None:
+            #         gnorm = param.grad.data.norm(2).item()
+            #         if gnorm > max_grad:
+            #             max_grad = gnorm
+            #             max_grad_param = name
+
+            # print(f"Largest gradient param: {max_grad_param} = {max_grad}")
+
             # Unscale and check for NaNs
             scaler.unscale_(optimizer)
             grad_norm = compute_grad_norm(model)
