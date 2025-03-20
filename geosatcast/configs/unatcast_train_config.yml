@@ -25,24 +25,29 @@ Model:
   in_steps: 2
   in_channels: 14
   out_channels: 11
-  down_channels: [384]
-  down_strides: [[2,1,1]]
-  down_block_depths: [4]
-  down_kernel_sizes: [[13,13]]
-  up_channels: []
-  up_strides: []
-  up_block_depths: []
-  up_kernel_sizes: []
+  down_channels: [192, 576]
+  down_mlp_ratio: [4, 4, 2]
+  down_gated: [False, False, True]
+  down_num_blocks: [8, 8, 16]
+  down_strides: [[2,1,1], [1,2,2], [1,2,2]]
+  down_block_depths: [2, 2, 4]
+  down_kernel_sizes: [[11,11], [11,11], [9,9]]
+  up_channels: [576, 192]
+  up_gated: [False, False]
+  up_num_blocks: [8, 8]
+  up_mlp_ratio: [4, 4]
+  up_strides: [[1,2,2],[1,2,2]]
+  up_block_depths: [2,2]
+  up_kernel_sizes: [[11,11], [11,11]]
   skip_type: "layer_scale"
-  skip_down_levels: []
-  skip_up_levels: []
-  mlp_ratio: 4
+  skip_down_levels: [0,1]
+  skip_up_levels: [0,1]
   num_blocks: 8
-  layer_scale: "normal"
+  layer_scale: 0
   final_conv: True
   resolution: [1, 1]
   emb_method: "spherical_rope"
-  downsample_type: ["conv"]   
+  downsample_type: ["conv", "avgpool", "avgpool"]   
   upsample_type: "interp"  
   interp_mode: "nearest"
 

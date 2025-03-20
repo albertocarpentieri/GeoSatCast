@@ -1,11 +1,11 @@
-ID: 'predformer-1024-Nds4-h16-hdim64'
-Experiment: 'predformer-1024-Nds4-h16-hdim64'
+ID: 'predformer-512-Nds12-h16-hdim32-s2-2steps'
+Experiment: 'predformer-512-Nds12-h16-hdim32-s2-2steps'
 
 seed: 0
 Dataset:
   data_path: '/capstor/scratch/cscs/acarpent/SEVIRI'
   invariants_path: '/capstor/scratch/cscs/acarpent/SEVIRI/invariants'
-  input_seq_len: 3
+  input_seq_len: 4
   num_workers: 16
   prefetch_factor: 16
   train_length: 16000
@@ -22,16 +22,16 @@ Model_Type: PredFormer
 Model:
   patch_size: 8
   pre_seq: 2
-  dim: 1024
+  dim: 512
   in_channels: 14
   out_channels: 11
   heads: 16
-  dim_head: 64
+  dim_head: 32
   dropout: 0.1
   attn_dropout: 0.1
   drop_path: 0.25
   scale_dim: 2
-  Ndepth: 4
+  Ndepth: 12
   in_steps: 2
 
 Checkpoint:
@@ -44,7 +44,7 @@ Loss:
   Monitor: "L1"
 
 Trainer:
-  n_steps: 1
+  n_steps: 2
   lr: 0.0005
   log_dir: '/capstor/scratch/cscs/acarpent/Logs/predformer/'
   max_epochs: 100

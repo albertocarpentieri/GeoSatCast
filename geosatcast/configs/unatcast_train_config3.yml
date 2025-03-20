@@ -1,5 +1,5 @@
-ID: "UNATCast-large-ks9_11-nb8-dd0_0_8-ud2_2-spherical_rope-192_384_960gated-L1"  
-Experiment: "UNATCast-large-ks9_11-nb8-dd0_0_8-ud2_2-spherical_rope-192_384_960gated-L1"  
+ID: "UNATCast-large-ks9_11-nb8-dd2_2_8-ud2_2-spherical_rope-192_384_768-L1"  
+Experiment: "UNATCast-large-ks9_11-nb8-dd2_2_8-ud2_2-spherical_rope-192_384_768-L1"  
 
 seed: 0
 Dataset:
@@ -25,18 +25,20 @@ Model:
   in_steps: 2
   in_channels: 14
   out_channels: 11
-  down_channels: [192, 576, 960]
-  down_mlp_ratio: [4, 4, 2]
-  down_gated: [False, False, True]
+  down_channels: [192, 384, 768]
+  down_mlp_ratio: [4, 4, 4]
+  down_gated: [False, False, False]
+  down_num_blocks: [8, 16, 32]
   down_strides: [[2,1,1], [1,2,2], [1,2,2]]
-  down_block_depths: [0, 0, 8]
-  down_kernel_sizes: [[0,0], [0,0], [9,9]]
-  up_channels: [576, 192]
+  down_block_depths: [2, 2, 8]
+  down_kernel_sizes: [[11,11], [9,9], [9,9]]
+  up_channels: [384, 192]
   up_gated: [False, False]
+  up_num_blocks: [16, 8]
   up_mlp_ratio: [4, 4]
   up_strides: [[1,2,2],[1,2,2]]
   up_block_depths: [2,2]
-  up_kernel_sizes: [[11,11], [11,11]]
+  up_kernel_sizes: [[9,9], [11,11]]
   skip_type: "layer_scale"
   skip_down_levels: [0,1]
   skip_up_levels: [0,1]
@@ -66,7 +68,7 @@ Trainer:
   gradient_clip: .5
   warmup_steps: 5000
   use_cosine: True
-  start_cosine_epoch: 10
+  start_cosine_epoch: 15
   T_max: 30
   eta_min: 0.0001
   use_reduce_on_plateau: True

@@ -234,12 +234,7 @@ def sinusoidal_embedding(n_channels, dim):
 class PredFormer_Model(nn.Module):
     def __init__(self, model_config, in_steps, **kwargs):
         super().__init__()
-        # self.image_height = model_config['height']
-        # self.image_width = model_config['width']
         self.patch_size = model_config['patch_size']
-        # self.num_patches_h = self.image_height // self.patch_size
-        # self.num_patches_w = self.image_width // self.patch_size
-        # self.num_patches = self.num_patches_h * self.num_patches_w
         self.num_frames_in = model_config['pre_seq']
 
         self.dim = model_config['dim']
@@ -254,11 +249,6 @@ class PredFormer_Model(nn.Module):
 
         self.Ndepth = model_config['Ndepth']  # "depth" for each GatedTransformer
         self.in_steps = in_steps
-
-        # assert self.image_height % self.patch_size == 0, \
-        #     'Image height must be divisible by the patch size.'
-        # assert self.image_width % self.patch_size == 0, \
-        #     'Image width must be divisible by the patch size.'
 
         self.in_patch_dim = self.in_channels * (self.patch_size ** 2)
         self.out_patch_dim = self.out_channels * (self.patch_size ** 2)
@@ -352,15 +342,13 @@ class PredFormer_Model(nn.Module):
         inv = inv.permute(0,2,1,3,4)
         B, T_in, C_in, H, W = x.shape
         preds = []
-        for i in range(n_steps):
+        for i in range(n_steps // self.in_steps + 1):
             step_inv = inv[:, i : i + self.in_steps]
             z = torch.cat([x, step_inv], dim=2)
-            next_frame = self.single_step_forward(z)
-            preds.append(next_frame[:, -1:])
-            x = torch.cat([x[:, 1:], next_frame[:, -1:]], dim=1)
-
+            x = self.single_step_forward(z)
+            preds.append(x)
         # after the loop, stack predictions:
-        preds = torch.cat(preds, dim=1)  # => [B, n_steps, outC, H, W]
+        preds = torch.cat(preds, dim=1)[:,:n_steps]  # => [B, n_steps, outC, H, W]
         return preds.permute(0,2,1,3,4)
 
 ################################################################################

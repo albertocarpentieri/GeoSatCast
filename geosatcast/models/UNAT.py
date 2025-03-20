@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.nn.init import trunc_normal_
 import math 
+from typing import Union
 
 from geosatcast.utils import avg_pool_nd, conv_nd
 from geosatcast.blocks.NAT import NATBlock2D
@@ -246,20 +247,21 @@ class UNAT(nn.Module):
         in_channels: int = 3,
         out_channels: int = 3,
         down_channels: list = None,
-        down_gated: list = [False],
-        down_mlp_ratio: list = [4],
+        down_gated: Union[bool, list] = False,
+        down_num_blocks: Union[int, list] = 1,
+        down_mlp_ratio: Union[int, list] = 4,
         down_strides: list = [(2,2)],  
         down_block_depths: list = [1], 
         down_kernel_sizes: list = [(3,3)],
         up_channels: list = None,  
-        up_gated: list = [False],
-        up_mlp_ratio: list = [4],
+        up_gated: Union[bool, list] = False,
+        up_num_blocks: Union[int, list] = 1,
+        up_mlp_ratio: Union[int, list] = 4,
         up_strides: list = [(2,2)], 
         up_block_depths: list = [1],
         up_kernel_sizes: list = [(3,3)],  
         norm=None,
         layer_scale=0,
-        num_blocks=2,
         skip_type='add',
         skip_down_levels=[],
         skip_up_levels=[],
@@ -288,6 +290,32 @@ class UNAT(nn.Module):
             upsample_type = [upsample_type]*len(up_channels)
         assert len(upsample_type) == len(up_channels)
 
+        if isinstance(down_num_blocks, int):
+            down_num_blocks = [down_num_blocks]*len(down_channels)
+        assert len(down_num_blocks) == len(down_channels)
+
+        if isinstance(up_num_blocks, int):
+            up_num_blocks = [up_num_blocks]*len(up_channels)
+        assert len(up_num_blocks) == len(up_channels)
+
+        if isinstance(down_mlp_ratio, int):
+            down_mlp_ratio = [down_mlp_ratio]*len(down_channels)
+        assert len(down_mlp_ratio) == len(down_channels)
+
+        if isinstance(up_mlp_ratio, int):
+            up_mlp_ratio = [up_mlp_ratio]*len(up_channels)
+        assert len(up_mlp_ratio) == len(up_channels)
+
+        if isinstance(down_gated, bool):
+            down_gated = [down_gated]*len(down_channels)
+        assert len(down_gated) == len(down_channels)
+
+        if isinstance(up_gated, bool):
+            up_gated = [up_gated]*len(up_channels)
+        assert len(up_gated) == len(up_channels)
+
+
+
         if up_channels is None:
             # Often reversed, e.g. [1024, 512, 256]
             up_channels = list(reversed(down_channels))
@@ -315,7 +343,7 @@ class UNAT(nn.Module):
                 layer_scale=layer_scale,
                 mlp_ratio=down_mlp_ratio[i],
                 gated=down_gated[i],
-                num_blocks=num_blocks,
+                num_blocks=down_num_blocks[i],
                 depth=down_block_depths[i],
                 emb_method=emb_method,
                 resolution=resolution,
@@ -343,7 +371,7 @@ class UNAT(nn.Module):
                 layer_scale=layer_scale,
                 mlp_ratio=up_mlp_ratio[i],
                 gated=up_gated[i],
-                num_blocks=num_blocks,
+                num_blocks=up_num_blocks[i],
                 skip_type=s,
                 depth=up_block_depths[i],
                 resolution=resolution,

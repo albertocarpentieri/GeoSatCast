@@ -389,6 +389,7 @@ class NATBlock2D(nn.Module):
             )
 
         self.layer_scale = False
+        self.deep_scale = False
         if layer_scale is not None and isinstance(layer_scale, (int, float)):
             self.layer_scale = True
             self.gamma1 = nn.Parameter(layer_scale * torch.ones(dim))
@@ -400,6 +401,13 @@ class NATBlock2D(nn.Module):
             self.gamma2 = nn.Parameter(torch.ones(dim))
             trunc_normal_(self.gamma1, std=0.02, mean=0.0, a=-2.0, b=2.0)
             trunc_normal_(self.gamma2, std=0.02, mean=0.0, a=-2.0, b=2.0)
+        
+        elif layer_scale == "deep":
+            self.deep_scale = True
+            self.alpha1 = nn.Parameter(torch.ones(dim))
+            self.alpha2 = nn.Parameter(torch.ones(dim))
+            self.gamma1 = nn.Parameter(torch.zeros(dim))
+            self.gamma2 = nn.Parameter(torch.zeros(dim))
 
     def forward(
         self, 
@@ -414,12 +422,15 @@ class NATBlock2D(nn.Module):
         # pass x,y to self.attn if cross => else y=None
         x_attn = self.attn(x, y=y, coords=coords)
 
-        if not self.layer_scale:
-            x = shortcut + x_attn
-            x = x + self.mlp(self.norm2(x))
-        else:
+        if self.layer_scale:
             x = shortcut + self.gamma1 * x_attn
             x = x + self.gamma2 * self.mlp(self.norm2(x))
+        elif self.deep_scale:
+            x = self.alpha1 * shortcut + self.gamma1 * x_attn
+            x = self.alpha2 * x + self.gamma2 * self.mlp(self.norm2(x))
+        else:
+            x = shortcut + x_attn
+            x = x + self.mlp(self.norm2(x))
         return x
 
 # ----------------------------------------------------------------------------

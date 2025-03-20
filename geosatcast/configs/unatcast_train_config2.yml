@@ -1,5 +1,5 @@
-ID: "UNATCast-small-ks11-nb8-spherical_rope-192_384L1" 
-Experiment: "UNATCast-small-ks11-nb8-spherical_rope-192_384L1" 
+ID: "UNATCast-small-ks11-nb8-spherical_rope-skip-192_384_960-dd2_2_4-ud2_2-deepscale-L2" 
+Experiment: "UNATCast-small-ks11-nb8-spherical_rope-skip-192_384_960-dd2_2_4-ud2_2-deepscale-L2" 
 
 seed: 0
 Dataset:
@@ -25,29 +25,29 @@ Model:
   in_steps: 2
   in_channels: 14
   out_channels: 11
-  down_channels: [192, 384]
-  down_mlp_ratio: [4, 4]
-  down_gated: [False, False]
-  down_strides: [[2,1,1], [1,2,2]]
-  down_block_depths: [1,1]
-  down_kernel_sizes: [[11,11],[11,11]]
-  up_channels: [192]
-  up_gated: [False]
+  down_channels: [192, 384, 960]
+  down_num_blocks: [8, 16, 32]
+  down_mlp_ratio: [4, 4, 4]
+  down_gated: [False, False,False]
+  down_strides: [[2,1,1], [1,2,2], [1,2,2]]
+  down_block_depths: [2,2,4]
+  down_kernel_sizes: [[11,11],[11,11],[11,11]]
+  up_channels: [384, 192]
+  up_num_blocks: [16, 8]
+  up_gated: [False, False]
   up_mlp_ratio: [4, 4]
-  up_strides: [1]
-  up_block_depths: []
-  up_kernel_sizes: []
+  up_strides: [[1,2,2], [1,2,2]]
+  up_block_depths: [2,2]
+  up_kernel_sizes: [[11,11],[11,11]]
   skip_type: "layer_scale"
-  skip_down_levels: []
-  skip_up_levels: []
-  mlp_ratio: 4
-  num_blocks: 8
-  layer_scale: 0
+  skip_down_levels: [0,1]
+  skip_up_levels: [0,1]
+  layer_scale: "deep"
   final_conv: True
   resolution: [1, 1]
   emb_method: "spherical_rope"
-  downsample_type: ["conv", "avgpool"]   
-  upsample_type: "transposed"  
+  downsample_type: ["conv", "avgpool","avgpool"]   
+  upsample_type: "interp"  
   interp_mode: "nearest"
 
 Checkpoint:
@@ -56,8 +56,8 @@ Checkpoint:
   finetune_path: 
 
 Loss:
-  Backprop: "L1"
-  Monitor: "L1"
+  Backprop: "L2"
+  Monitor: "L2"
 
 Trainer:
   n_steps: 1
