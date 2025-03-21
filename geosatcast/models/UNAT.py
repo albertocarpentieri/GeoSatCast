@@ -59,11 +59,13 @@ class DownBlock(nn.Module):
                 padding=0,
                 padding_mode="reflect",
             )
-            nn.init.xavier_uniform_(self.downsample.weight)
+            # trunc_normal_(self.downsample.weight, std=2/in_ch, mean=0.0)
+            # # trunc_normal_(self.downsample.bias, std=.1, mean=0.0)
+            nn.init.xavier_normal_(self.downsample.weight, gain=2)
             nn.init.zeros_(self.downsample.bias)
             self.channel_proj = None
 
-        else:  # "avgpool"
+        elif self.downsample_type == "avgpool":
             # We'll do a 1×1 conv (only if channels differ) + average pooling
             self.downsample = None
             if in_ch != out_ch:
@@ -76,10 +78,41 @@ class DownBlock(nn.Module):
                     padding=0,
                     padding_mode="reflect"
                 )
-                nn.init.xavier_uniform_(self.channel_proj.weight)
+                nn.init.xavier_normal_(self.channel_proj.weight, gain=2)
                 nn.init.zeros_(self.channel_proj.bias)
             else:
                 self.channel_proj = nn.Identity()
+        
+
+        elif self.downsample_type == "timecrossnat":
+            self.downsample = None
+            if in_ch != out_ch:
+                self.channel_proj = conv_nd(
+                    dims=3,
+                    in_channels=in_ch,
+                    out_channels=out_ch,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    padding_mode="reflect"
+                )
+                # nn.init.normal_(self.channel_proj.weight, std=3/in_ch, mean=0.0)
+                nn.init.xavier_normal_(self.channel_proj.weight, gain=2)
+                nn.init.zeros_(self.channel_proj.bias)
+            else:
+                self.channel_proj = nn.Identity()
+            self.crossnat = NATBlock2D(
+                    dim=out_ch,
+                    mlp_ratio=mlp_ratio, 
+                    num_blocks=num_blocks,
+                    norm=norm,
+                    gated=gated,
+                    kernel_size=kernel_size,
+                    layer_scale=layer_scale,
+                    emb_method=emb_method,
+                    resolution=resolution,
+                    cross=True
+                )
 
         # NAT block(s) as before:
         if depth > 0:
@@ -106,19 +139,33 @@ class DownBlock(nn.Module):
     def forward(self, x: torch.Tensor, grid: torch.Tensor = None) -> torch.Tensor:
         if self.downsample_type == "conv":
             x = self.downsample(x)
-        else:
+        elif self.downsample_type == "avgpool":
             x = self.channel_proj(x)
+            # print("after channel proj", x.mean(), x.std())
             x = F.avg_pool3d(x, kernel_size=self.stride, stride=self.stride)
+            # print("after avg pool", x.mean(), x.std())
+        elif self.downsample_type == "timecrossnat":
+            x = self.channel_proj(x)
+            # print("after channel proj", x.mean(), x.std())
+            x = self.crossnat(
+                x[:,:,-1,].permute(0, 2, 3, 1),
+                x[:,:,-2,].permute(0, 2, 3, 1),
+                grid)
+            x = x.permute(0, 3, 1, 2).unsqueeze(2)
+        # print("after downsampling", x.mean(), x.std())
         
         if grid is not None:
             grid = _downsample_grid(grid, stride=self.stride)
         
         # NAT blocks in 2D style
         if self.nat_blocks:
-            x = x.squeeze(2).permute(0, 2, 3, 1)   # (B, H, W, C)
+            if len(x.shape) == 5:
+                x = x.squeeze(2).permute(0, 2, 3, 1)   # (B, H, W, C)
             for blk in self.nat_blocks:
                 x = checkpoint(blk, x, None, grid, use_reentrant=False)
+                # print("after down nat", x.mean(), x.std())
             x = x.permute(0, 3, 1, 2).unsqueeze(2)
+        # print()
         return x, grid
 
 
@@ -167,8 +214,10 @@ class UpBlock(nn.Module):
             # 1×1 conv to adjust channels
             if in_ch != out_ch:
                 self.channel_proj = nn.Conv3d(in_ch, out_ch, kernel_size=1)
-                nn.init.xavier_uniform_(self.channel_proj.weight)
-                # nn.init.zeros_(self.channel_proj.bias)
+                # nn.init.xavier_uniform_(self.channel_proj.weight)
+                # nn.init.normal_(self.channel_proj.weight, std=3/in_ch, mean=0.0)
+                nn.init.xavier_normal_(self.channel_proj.weight, gain=.8)
+                nn.init.zeros_(self.channel_proj.bias)
             else:
                 self.channel_proj = nn.Identity()
             self.scale_factor = stride
@@ -194,12 +243,26 @@ class UpBlock(nn.Module):
         else:
             self.nat_blocks = None
 
-        if self.skip_type == "layer_scale":
+        if self.skip_type in ["layer_scale", "inverse_layer_scale"]:
             self.skip_scale = nn.Parameter(
-                torch.rand((1, out_ch, 1, 1, 1)),
+                torch.zeros((1, out_ch, 1, 1, 1)),
                 requires_grad=True
             )
-            trunc_normal_(self.skip_scale, std=0.02, mean=0.0, a=-2.0, b=2.0)
+        
+        elif self.skip_type in ["crossnat", "inv_crossnat"]:
+            self.skip_nat = NATBlock2D(
+                        dim=out_ch,
+                        mlp_ratio=mlp_ratio, 
+                        num_blocks=num_blocks,
+                        norm=norm,
+                        gated=gated,
+                        kernel_size=kernel_size,
+                        layer_scale=layer_scale,
+                        emb_method=emb_method,
+                        resolution=resolution,
+                        cross=True
+                    )
+            
             
 
     def forward(self, x: torch.Tensor, grid: torch.Tensor = None, skip: torch.Tensor = None) -> torch.Tensor:
@@ -207,6 +270,7 @@ class UpBlock(nn.Module):
             x = self.upsample(x)
         else:
             x = self.channel_proj(x)
+            # print("channel_proj", x.mean(), x.std())
             x = F.interpolate(
                 x, 
                 scale_factor=self.scale_factor, 
@@ -214,6 +278,7 @@ class UpBlock(nn.Module):
                 # align_corners only relevant if "linear" modes:
                 align_corners=False if "linear" in self.interp_mode else None
             )
+        # print("upsampling", x.mean(), x.std())
         
         # Merge skip
         if skip is not None:
@@ -221,15 +286,29 @@ class UpBlock(nn.Module):
                 x = x + skip
             elif self.skip_type == 'layer_scale':
                 x = x + self.skip_scale * skip
+            elif self.skip_type == 'inverse_layer_scale':
+                x = self.skip_scale * x + skip
             elif self.skip_type == 'concat':
                 x = torch.cat([x, skip], dim=1)
-
+            elif self.skip_type == "crossnat":
+                x = x.squeeze(2).permute(0, 2, 3, 1)
+                skip = skip.squeeze(2).permute(0, 2, 3, 1)
+                x = self.skip_nat(skip, x, grid)
+                x = x.permute(0, 3, 1, 2).unsqueeze(2)
+            elif self.skip_type == "inv_crossnat":
+                x = x.squeeze(2).permute(0, 2, 3, 1)
+                skip = skip.squeeze(2).permute(0, 2, 3, 1)
+                x = self.skip_nat(x, skip, grid)
+                x = x.permute(0, 3, 1, 2).unsqueeze(2)
+        # print("after skip", x.mean(), x.std())
         # NAT blocks
         if self.nat_blocks:
             x = x.squeeze(2).permute(0, 2, 3, 1)
             for blk in self.nat_blocks: 
                 x = checkpoint(blk, x, None, grid, use_reentrant=False)
+                # print("up nat", x.mean(), x.std())
             x = x.permute(0, 3, 1, 2).unsqueeze(2)
+            # print()
         return x
 
 class UNAT(nn.Module):
@@ -389,7 +468,7 @@ class UNAT(nn.Module):
                 kernel_size=1
             )
             torch.nn.init.xavier_uniform_(self.final_conv.weight)
-            # torch.nn.init.zeros_(self.final_conv.bias)
+            torch.nn.init.zeros_(self.final_conv.bias)
         else:
             self.final_conv = nn.Identity()
         
@@ -440,6 +519,8 @@ class UNAT(nn.Module):
                            dtype=x.dtype, device=x.device)
         for i in range(n_steps):
             z = torch.cat((x, inv[:,:,i:i+self.in_steps]), dim=1)
+            # print("x:", z[:,:,1].mean(), z[:,:,1].std())
+            # print()
             z = self.one_step_forward(z, grid)  # run UNet
             yhat[:,:,i:i+1] = z
             if i < n_steps-1:
@@ -448,64 +529,4 @@ class UNAT(nn.Module):
         return yhat
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
-    import time
-    # 3) Build a small model
-    model = UNAT(
-        in_channels=4,
-        out_channels=3,
-        down_channels=[192,768],
-        up_channels=[192],
-        down_strides=[(2,1,1),(1,2,2)],  
-        down_block_depths=[4,4], 
-        down_kernel_sizes=[(5,5),(5,5)],    # or (2,2,2) if 3D
-        up_strides=[(1,2,2)], 
-        up_block_depths=[4],
-        up_kernel_sizes=[(5,5)],  
-        norm=None,
-        layer_scale="normal",
-        mlp_ratio=4,
-        num_blocks=1,
-        skip_type='layer_scale',
-        skip_down_levels=[0],
-        skip_up_levels=[0],
-        in_steps=2,
-        resolution=1.0,
-        emb_method="spherical_rope",
-        downsample_type="avgpool",   # can be str or list[str]
-        upsample_type="interp",  # can be str or list[str]
-        interp_mode="nearest").to(device)
-
-    # 4) Create random input & target
-    B, H, W, C = 2, 64, 64, 16
-    x = torch.randn(B,3,2,H,W, device=device)
-    inv = torch.randn(B,1,3,H,W, device=device)
-    grid = torch.randn(B,H,W,2, device=device)
-    # We'll treat out as [B,H,W,C], do a simple MSE to a random target
-    target = torch.randn(B,3,1,H,W, device=device)
-
-    # 5) Simple training step: define optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-    # 6) Forward pass
-    start = time.time()
-    out = model(x, inv, grid)
-    print(time.time() - start)
-    loss = F.mse_loss(out, target)
-
-    # 7) Backward pass
-    optimizer.zero_grad()
-    loss.backward()
-
-    # 8) Check the gradient for rel_dist_scale
-    for name, param in model.named_parameters():
-        if param.grad is not None:
-            print(f'Gradients/{name}/{param.grad.detach().cpu().numpy().mean()}')
-
-    # 9) (Optional) step
-    optimizer.step()
-
-    # print final parameter
-    if hasattr(model, "rpb"):
-        print("rel_dist_scale after step:", model.rpb.item())
+    pass

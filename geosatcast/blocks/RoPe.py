@@ -150,6 +150,7 @@ class SphericalRoPE(nn.Module):
         self.num_blocks = d_head // 3  # each block has 3 channels
         self.freq = nn.Parameter(torch.zeros(num_heads, self.num_blocks, 2))
         nn.init.normal_(self.freq, mean=0.0, std=0.02)
+        # nn.init.normal_(self.freq, mean=0.0, std=0.01)
 
     def forward(
         self,
@@ -181,7 +182,7 @@ class SphericalRoPE(nn.Module):
 
         # Compute phase angles.
         # A = lon * freq_A and B = lat * freq_B
-        lon = lon * freq_lon  # [B, heads, num_blocks, H, W]
+        lon = lon * freq_lon # [B, heads, num_blocks, H, W]
         lat = lat * freq_lat  # [B, heads, num_blocks, H, W]
 
         # Precompute sin and cos for both A and B.

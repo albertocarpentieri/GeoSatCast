@@ -1,5 +1,5 @@
-ID: 'predformer-512-Nds12-h16-hdim32-s2-2steps'
-Experiment: 'predformer-512-Nds12-h16-hdim32-s2-2steps'
+ID: 'predformer-512-Nds12-h16-hdim32-s4-2steps'
+Experiment: 'predformer-512-Nds12-h16-hdim32-s4-2steps'
 
 seed: 0
 Dataset:
@@ -30,7 +30,7 @@ Model:
   dropout: 0.1
   attn_dropout: 0.1
   drop_path: 0.25
-  scale_dim: 2
+  scale_dim: 4
   Ndepth: 12
   in_steps: 2
 

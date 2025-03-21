@@ -1,6 +1,6 @@
 from geosatcast.train.distribute_training import load_unatcast
 
-model_name = "UNATCast-small-ks11-nb8-spherical_rope-skip-192_384_960-dd2_2_4-ud2_2-deepscale-L2"
+model_name = "UNATCast-small-ks9-nb8-spherical_rope-192_1152-ud2_4-ud2-L1-v2"
 folder = "UNATCast-small"
 epoch = 0
 for epoch in range(30):
@@ -12,4 +12,8 @@ for epoch in range(30):
         if "gamma" in name:
             print(epoch, name, param.detach().square().mean().sqrt())
         if "alpha" in name:
+            print(epoch, name, param.detach().square().mean().sqrt())
+        if "skip" in name:
+            print(epoch, name, param.detach().square().mean().sqrt())
+        if "freq" in name:
             print(epoch, name, param.detach().square().mean().sqrt())

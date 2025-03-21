@@ -1,5 +1,6 @@
 from typing import Optional, Union, Tuple
 import torch
+import math
 from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
@@ -128,19 +129,19 @@ class Nat2D(nn.Module):
         # QKV for self-attn or QV+K for cross-attn
         if not self.cross:
             self.qkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
-            torch.nn.init.xavier_uniform_(self.qkv.weight)
+            torch.nn.init.xavier_normal_(self.qkv.weight)
             torch.nn.init.zeros_(self.qkv.bias)
         else:
             self.qv = nn.Linear(dim, 2*dim, bias=qv_bias)
             self.k = nn.Linear(dim, dim, bias=k_bias)
-            torch.nn.init.xavier_uniform_(self.qv.weight)
+            torch.nn.init.xavier_normal_(self.qv.weight)
             torch.nn.init.zeros_(self.qv.bias)
-            torch.nn.init.xavier_uniform_(self.k.weight)
+            torch.nn.init.xavier_normal_(self.k.weight)
             torch.nn.init.zeros_(self.k.bias)
 
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
-        torch.nn.init.xavier_uniform_(self.proj.weight)
+        torch.nn.init.xavier_normal_(self.proj.weight)
         torch.nn.init.zeros_(self.proj.bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -200,6 +201,7 @@ class Nat2D(nn.Module):
         y: Optional[Tensor] = None,
         coords: Optional[Tensor] = None,
     ) -> Tensor:
+        # print("pre att x:", x.mean(), x.std())
         """
         x => [B,H,W,C]
         y => if cross=True => second input. If None => self-attn.
@@ -232,7 +234,6 @@ class Nat2D(nn.Module):
             qv = qv.permute(3,0,4,1,2,5)
             q, v = qv[0], qv[1]
             k = self.k(y).reshape(B,H,W,self.num_heads,self.head_dim).permute(0,3,1,2,4)
-
         q = q * self.scale
 
         rpb = self.rpb
@@ -260,15 +261,17 @@ class Nat2D(nn.Module):
 
         attn = F.softmax(attn, dim=-1)
         attn = self.attn_drop(attn)
-
+        # print("v", v.mean(), v.std())
         out = na2d_av(
             attn, v,
             kernel_size=self.kernel_size,
             dilation=self.dilation,
             is_causal=self.is_causal,
         )
+        # print("attn out", out.mean(), out.std())
         out = out.permute(0,2,3,1,4).reshape(B,H,W,C)
         out = self.proj_drop(self.proj(out))
+        # print("out", out.mean(), out.std())
         return out
 
 
@@ -281,17 +284,20 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = activation(act)
         self.fc2 = nn.Linear(hidden_features, out_features)
-        torch.nn.init.xavier_uniform_(self.fc1.weight)
+        torch.nn.init.xavier_normal_(self.fc1.weight, gain=math.sqrt(2))
         torch.nn.init.zeros_(self.fc1.bias)
-        torch.nn.init.xavier_uniform_(self.fc2.weight)
+        torch.nn.init.xavier_normal_(self.fc2.weight, gain=math.sqrt(2))
         torch.nn.init.zeros_(self.fc2.bias)
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
         x = self.fc1(x)
+        # print("x after fc1", x.mean(), x.std())
         x = self.act(x)
+        # print("x after gelu", x.mean(), x.std())
         x = self.drop(x)
         x = self.fc2(x)
+        # print("x after fc2", x.mean(), x.std())
         x = self.drop(x)
         return x
 
@@ -404,10 +410,10 @@ class NATBlock2D(nn.Module):
         
         elif layer_scale == "deep":
             self.deep_scale = True
-            self.alpha1 = nn.Parameter(torch.ones(dim))
-            self.alpha2 = nn.Parameter(torch.ones(dim))
-            self.gamma1 = nn.Parameter(torch.zeros(dim))
-            self.gamma2 = nn.Parameter(torch.zeros(dim))
+            self.alpha1 = nn.Parameter(torch.ones(dim) - 1e-3)
+            self.alpha2 = nn.Parameter(torch.ones(dim) - 1e-3)
+            self.gamma1 = nn.Parameter(torch.zeros(dim) + 1e-3)
+            self.gamma2 = nn.Parameter(torch.zeros(dim) + 1e-3)
 
     def forward(
         self, 
@@ -424,7 +430,9 @@ class NATBlock2D(nn.Module):
 
         if self.layer_scale:
             x = shortcut + self.gamma1 * x_attn
+            # print("after attn", x.mean(), x.std())
             x = x + self.gamma2 * self.mlp(self.norm2(x))
+            # print("after mlp", x.mean(), x.std())
         elif self.deep_scale:
             x = self.alpha1 * shortcut + self.gamma1 * x_attn
             x = self.alpha2 * x + self.gamma2 * self.mlp(self.norm2(x))
@@ -450,7 +458,7 @@ if __name__ == "__main__":
         resolution=1.0
     ).to(device)
     out2d = block2d(x2d)
-    print("NATBlock2D self-attn shape:", out2d.shape)
+    # print("NATBlock2D self-attn shape:", out2d.shape)
 
     # 2D cross-attn
     x2d_q = torch.randn(b, h, w, c, device=device)
@@ -463,4 +471,4 @@ if __name__ == "__main__":
         rel_dist_bias=True
     ).to(device)
     out2d_cross = block2d_cross(x2d_q, y=x2d_kv)
-    print("NATBlock2D cross-attn shape:", out2d_cross.shape)
+    # print("NATBlock2D cross-attn shape:", out2d_cross.shape)
